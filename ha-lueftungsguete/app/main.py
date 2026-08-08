@@ -399,6 +399,12 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+async def api_config() -> JSONResponse:
+    controller = _controller(app)
+    return JSONResponse({"poll_interval_seconds": controller.options.poll_interval_seconds})
+
+
 @app.get("/api/rooms")
 async def api_rooms() -> JSONResponse:
     controller = _controller(app)
@@ -456,6 +462,7 @@ _INDEX_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>Lüftungsgüte</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
   body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #0f1115; color: #e6e6e6; }
   h1 { font-size: 1.3rem; }
@@ -469,11 +476,27 @@ _INDEX_HTML = """<!doctype html>
   .g-mid { background: #6b5b1f; color: #ffe9b3; }
   .g-bad { background: #6f1f1f; color: #ffd7d7; }
   .muted { color: #888; font-size: 0.85rem; }
+  .tabs { margin-bottom: 1rem; }
+  .tab-btn {
+    background: #1b1e24; color: #ccc; border: 1px solid #333; padding: 0.4rem 1rem;
+    margin-right: 0.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+  }
+  .tab-btn.active { background: #2b3f6b; color: #fff; border-color: #3b5aa0; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  #plot3d { width: 100%; height: 620px; }
 </style>
 </head>
 <body>
 <h1>Lüftungsgüte</h1>
 <p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code>, <code>/api/no-window-rooms</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="table">Tabelle</button>
+  <button class="tab-btn" data-tab="plot3d">3D-Ansicht</button>
+</div>
+
+<div id="tab-table" class="tab-panel active">
 <h2>Räume (mit Fenster)</h2>
 <table id="rooms"><thead><tr>
   <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte (0-100)</th><th>ΔGüte</th><th>Lüften?</th>
@@ -482,6 +505,13 @@ _INDEX_HTML = """<!doctype html>
 <table id="no-window"><thead><tr>
   <th>Raum</th><th>T</th><th>F rel</th><th>F abs</th><th>Schimmelrisiko</th>
 </tr></thead><tbody></tbody></table>
+</div>
+
+<div id="tab-plot3d" class="tab-panel">
+<p class="muted">X = Temperatur (10-35 °C), Y = relative Feuchte (0-100 %), Z = Güte (0-100). Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot/orange = Verschlechterung. Diamant = Idealpunkt bzw. Bad (Schimmelrisiko statt Güte).</p>
+<div id="plot3d"></div>
+</div>
+
 <script>
 function guteClass(v) {
   if (v > 70) return 'g-good';
@@ -517,6 +547,222 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 15000);
+
+// --- 3D-Ansicht (Plotly) ---
+
+function lerpColor(a, b, t) {
+  const ah = parseInt(a.slice(1), 16), bh = parseInt(b.slice(1), 16);
+  const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  const rr = Math.round(ar + (br - ar) * t);
+  const rg = Math.round(ag + (bg - ag) * t);
+  const rb = Math.round(ab + (bb - ab) * t);
+  return `rgb(${rr},${rg},${rb})`;
+}
+
+function deltaColor(delta) {
+  // delta = Güte an diesem Punkt minus Güte am 0%-Punkt (aktueller Zustand).
+  // Grau = keine Änderung, Grün = Verbesserung, Rot = Verschlechterung.
+  const t = Math.max(-1, Math.min(1, delta / 100));
+  if (t >= 0) return lerpColor('#8a8f98', '#22c55e', t);
+  return lerpColor('#8a8f98', '#ef4444', -t);
+}
+
+function baseColorForRoom(slug) {
+  let hash = 0;
+  for (const ch of slug) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${hash}, 70%, 60%)`;
+}
+
+let plot3dLoaded = false;
+let plot3dFirstRender = true;
+let plot3dTimer = null;
+let plot3dPollMs = 60000;
+
+async function loadPollInterval() {
+  try {
+    const cfg = await (await fetch('api/config')).json();
+    if (cfg.poll_interval_seconds) plot3dPollMs = cfg.poll_interval_seconds * 1000;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function pointHover(name, blend, p) {
+  return `<b>${name}</b><br>Blend ${blend}%<br>T=${p.temp_c}°C<br>F rel=${p.humidity_rel_pct}%<br>Güte=${p.guete}<extra></extra>`;
+}
+
+async function refreshPlot3d() {
+  const gd = document.getElementById('plot3d');
+  let rooms, noWindowRooms;
+  try {
+    rooms = await (await fetch('api/rooms')).json();
+    noWindowRooms = await (await fetch('api/no-window-rooms')).json();
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+
+  const curves = await Promise.all(rooms.map(async r => {
+    try {
+      return await (await fetch(`api/rooms/${r.slug}/blend-curve`)).json();
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }));
+
+  const traces = [];
+  const segmentSteps = [];
+  const finalStepExtras = [];
+
+  rooms.forEach((room, i) => {
+    const curveData = curves[i];
+    if (!curveData || !curveData.points || curveData.points.length < 2) return;
+    const points = curveData.points;
+    const guete0 = points[0].guete;
+    const baseColor = baseColorForRoom(room.slug);
+
+    traces.push({
+      type: 'scatter3d', mode: 'markers',
+      x: [points[0].temp_c], y: [points[0].humidity_rel_pct], z: [points[0].guete],
+      marker: { size: 9, color: baseColor, symbol: 'circle' },
+      name: room.name,
+      hovertemplate: pointHover(room.name, points[0].blend, points[0]),
+      showlegend: true,
+    });
+
+    traces.push({
+      type: 'scatter3d', mode: 'markers',
+      x: [room.ideal_temp], y: [room.ideal_humidity_rel], z: [100],
+      marker: { size: 6, symbol: 'diamond', color: baseColor },
+      hoverinfo: 'skip',
+      showlegend: false,
+    });
+
+    for (let s = 0; s < points.length - 1; s++) {
+      const p0 = points[s], p1 = points[s + 1];
+      const color = deltaColor(p1.guete - guete0);
+      const idx = traces.length;
+      traces.push({
+        type: 'scatter3d', mode: 'lines+markers',
+        x: [p0.temp_c, p1.temp_c], y: [p0.humidity_rel_pct, p1.humidity_rel_pct], z: [p0.guete, p1.guete],
+        line: { color: color, width: 6 },
+        marker: { size: 3, color: color },
+        hovertemplate: [pointHover(room.name, p0.blend, p0), pointHover(room.name, p1.blend, p1)],
+        showlegend: false,
+        visible: false,
+      });
+      (segmentSteps[s] = segmentSteps[s] || []).push(idx);
+    }
+
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const coneColor = deltaColor(last.guete - guete0);
+    const coneIdx = traces.length;
+    traces.push({
+      type: 'cone',
+      x: [last.temp_c], y: [last.humidity_rel_pct], z: [last.guete],
+      u: [last.temp_c - prev.temp_c], v: [last.humidity_rel_pct - prev.humidity_rel_pct], w: [last.guete - prev.guete],
+      anchor: 'tip', sizemode: 'scaled', sizeref: 2,
+      colorscale: [[0, coneColor], [1, coneColor]], showscale: false,
+      hoverinfo: 'skip',
+      visible: false,
+    });
+    finalStepExtras.push(coneIdx);
+  });
+
+  noWindowRooms.forEach(room => {
+    const riskColor = room.schimmelrisiko ? '#ef4444' : '#22c55e';
+    traces.push({
+      type: 'scatter3d', mode: 'markers',
+      x: [room.temp], y: [room.humidity_rel], z: [0],
+      marker: { size: 8, symbol: 'diamond', color: '#888888' },
+      name: room.name,
+      hoverlabel: { bgcolor: riskColor },
+      hovertemplate: `<b>${room.name}</b><br>T=${room.temp}°C<br>F rel=${room.humidity_rel}%<br>Schimmelrisiko: ${room.schimmelrisiko ? 'ja' : 'nein'}<extra></extra>`,
+      showlegend: true,
+    });
+  });
+
+  const axisStyle = { gridcolor: '#333', zerolinecolor: '#333', color: '#e6e6e6', backgroundcolor: 'rgba(0,0,0,0)' };
+  const layout = {
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#e6e6e6' },
+    margin: { l: 0, r: 0, t: 10, b: 0 },
+    uirevision: 'lueftungsguete-3d',
+    legend: { font: { color: '#e6e6e6' } },
+    scene: {
+      xaxis: Object.assign({ title: 'T (°C)', range: [10, 35] }, axisStyle),
+      yaxis: Object.assign({ title: 'F rel (%)', range: [0, 100] }, axisStyle),
+      zaxis: Object.assign({ title: 'Güte', range: [0, 100] }, axisStyle),
+    },
+  };
+
+  await Plotly.react(gd, traces, layout, { responsive: true });
+
+  let step = 0;
+  const totalSteps = segmentSteps.length;
+  const revealTimer = setInterval(() => {
+    if (step >= totalSteps) {
+      clearInterval(revealTimer);
+      return;
+    }
+    const indices = segmentSteps[step] || [];
+    if (indices.length) Plotly.restyle(gd, { visible: true }, indices);
+    if (step === totalSteps - 1 && finalStepExtras.length) {
+      Plotly.restyle(gd, { visible: true }, finalStepExtras);
+    }
+    step++;
+  }, 120);
+
+  if (plot3dFirstRender) {
+    plot3dFirstRender = false;
+    startAutoRotate(gd);
+  }
+}
+
+function startAutoRotate(gd) {
+  let active = true;
+  let programmatic = false;
+  const start = performance.now();
+  const duration = 8000;
+
+  function frame(now) {
+    if (!active) return;
+    const elapsed = now - start;
+    if (elapsed > duration) { active = false; return; }
+    const angle = (elapsed / duration) * Math.PI * 1.2;
+    programmatic = true;
+    Plotly.relayout(gd, { 'scene.camera.eye': { x: 1.8 * Math.cos(angle), y: 1.8 * Math.sin(angle), z: 0.9 } })
+      .then(() => requestAnimationFrame(frame));
+  }
+  requestAnimationFrame(frame);
+
+  gd.on('plotly_relayout', () => {
+    if (programmatic) { programmatic = false; return; }
+    active = false;
+  });
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'plot3d' && !plot3dLoaded) {
+      plot3dLoaded = true;
+      loadPollInterval().then(() => {
+        refreshPlot3d();
+        plot3dTimer = setInterval(refreshPlot3d, plot3dPollMs);
+      });
+    } else if (btn.dataset.tab === 'plot3d') {
+      Plotly.Plots.resize(document.getElementById('plot3d'));
+    }
+  });
+});
 </script>
 </body>
 </html>

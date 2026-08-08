@@ -163,11 +163,49 @@ Güte(Raum) = 100 * max(0, 1 - D²)
 `GET /api/rooms/{room}/blend-curve` liefert 11 Punkte (bei `blend_steps: 10`)
 von 0 % (aktueller Innenraumzustand) bis 100 % (vollständig Außenluft), je
 mit `{blend, temp_c, abs_humidity_gm3, humidity_rel_pct, guete}`. Die
-Rohwerte (`temp_c`, `abs_humidity_gm3`) bleiben unverändert Grundlage für die
-geplante spätere 3D-Visualisierung (Achsen: Feuchte, Temperatur, Güte + Pfeil
-0→100 %); `guete` liegt jetzt auf der 0–100-Skala, zusätzlich wird die aus
-der Mischung zurückgerechnete relative Feuchte (`humidity_rel_pct`)
-mitgeliefert.
+Rohwerte (`temp_c`, `abs_humidity_gm3`) sind Grundlage der 3D-Visualisierung
+(siehe unten); `guete` liegt auf der 0–100-Skala, zusätzlich wird die aus der
+Mischung zurückgerechnete relative Feuchte (`humidity_rel_pct`) mitgeliefert.
+
+## 3D-Visualisierung
+
+Der Tab „3D-Ansicht" auf der Ingress-Seite (neben der bestehenden Tabelle,
+diese bleibt unverändert erreichbar) zeigt einen interaktiven 3D-Plot via
+[Plotly.js](https://plotly.com/javascript/) (per CDN eingebunden, kein
+Build-Step, keine neue Backend-Abhängigkeit):
+
+- **Achsen** (fest, kein Autoscale): X = Temperatur 10–35 °C, Y = relative
+  Feuchte 0–100 %, Z = Güte 0–100.
+- **Räume mit Fenster**: Linie durch alle 11 Blend-Punkte (0→100 % Außenluft),
+  Farbe pro Segment interpoliert zwischen Grau (keine Änderung), Grün
+  (Verbesserung ggü. dem aktuellen Zustand) und Rot (Verschlechterung) –
+  bezogen auf `Güte(blend=100%) - Güte(blend=aktuell)` an diesem Punkt.
+  Größerer Marker am aktuellen Zustand (blend=0 %, dient auch als
+  Legenden-Symbol), Pfeilspitze (`cone`-Trace) am 100%-Endpunkt, kleiner
+  Diamant-Marker am Idealpunkt `(ideal_temp, ideal_humidity_rel, 100)`.
+- **Bad** (kein Fenster, kein Güte-Score): einzelner grauer Diamant-Marker
+  ohne Pfad/Pfeil; Hover zeigt statt Güte den Schimmelrisiko-Status, die
+  Hover-Box ist rot (Risiko) bzw. grün (ok) eingefärbt.
+- **Dark Theme**: Hintergrund transparent, Achsen/Gitter/Legende in den
+  Farben der bestehenden Ingress-Seite (`#e6e6e6` Text, `#333` Gitter).
+- **Auto-Rotate**: Kamera dreht sich beim allerersten Rendern automatisch
+  ca. 8 Sekunden lang, bricht sofort ab, sobald selbst per Maus/Touch
+  gedreht/gezoomt wird.
+- **Animiertes Einzeichnen**: Die Blend-Kurven bauen sich bei jedem Laden/
+  Neu-Poll segmentweise auf, statt sofort komplett zu erscheinen.
+- **Polling**: nutzt `poll_interval_seconds` (über einen neuen, kleinen
+  `GET /api/config`-Endpoint ans Frontend übergeben), unabhängig vom fest
+  auf 15 s stehenden Tabellen-Refresh. Das 3D-Polling startet erst beim
+  ersten Wechsel auf den Tab (vermeidet Plotly-Rendering-Probleme auf einem
+  zunächst unsichtbaren `display:none`-Container), läuft danach im
+  Hintergrund weiter.
+
+**Bekannte Annahmen/offene Punkte** (nicht aus dem Auftrag eindeutig ableitbar):
+- Der Bad-Marker wird auf `z=0` (Boden der Güte-Achse) platziert, da für Bad
+  kein Güte-Wert existiert und keine andere Position vorgegeben war.
+- Cone-Größe (`sizeref`) und Rotationsgeschwindigkeit/-dauer sind plausible
+  Startwerte – da in dieser Umgebung kein Browser zum visuellen Testen zur
+  Verfügung stand, ggf. nach dem ersten Blick auf die echte Seite anpassen.
 
 ### Tests
 
@@ -185,6 +223,7 @@ python -m unittest test_scoring.py
 - `GET /api/rooms` – aktuelle Werte + Güte aller Lüftungsräume (manuell + auto-erkannt)
 - `GET /api/rooms/{room}/blend-curve` – die Blend-Punkte für einen Raum (Name oder Slug, z.B. `wohnzimmer`)
 - `GET /api/no-window-rooms` – aktuelle Werte + Schimmelrisiko aller fensterlosen Räume
+- `GET /api/config` – aktuell nur `poll_interval_seconds`, für den Refresh-Rhythmus der 3D-Ansicht im Frontend
 - `GET /health` – Health-Check
 
 ## Optionen
