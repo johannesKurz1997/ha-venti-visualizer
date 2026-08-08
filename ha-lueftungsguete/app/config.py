@@ -25,6 +25,8 @@ class RoomConfig(BaseModel):
     ideal_humidity_rel: float
     weight_temp: float = 1.0
     weight_humidity: float = 1.0
+    sigma_temp: float | None = None
+    sigma_humidity_rel: float | None = None
     binary_sensor_suffix: str | None = None
 
     @property
@@ -64,11 +66,13 @@ class AddonOptions(BaseModel):
     auto_discover_rooms: bool = True
     area_discovery_interval_minutes: int = 30
     no_window_areas: list[str] = Field(default_factory=lambda: ["Bad"])
-    outdoor_area_name: str = "Außen"
+    outdoor_area_name: str = "Aussen"
     default_ideal_temp: float = 21.0
     default_ideal_humidity_rel: float = 45.0
     default_weight_temp: float = 1.0
     default_weight_humidity: float = 1.0
+    default_sigma_temp: float = 10.0
+    default_sigma_humidity_rel: float = 40.0
 
     rooms: list[RoomConfig] = Field(default_factory=list)
     no_window_rooms: list[NoWindowRoomConfig] = Field(default_factory=list)
@@ -77,7 +81,7 @@ class AddonOptions(BaseModel):
 
     outdoor_weather_entity: str | None = None
     blend_steps: int = 10
-    delta_guete_threshold: float = 0.5
+    delta_guete_threshold: float = 5.0
     stability_minutes: int = 10
     poll_interval_seconds: int = 60
     notify_targets: list[NotifyTarget] = Field(default_factory=list)

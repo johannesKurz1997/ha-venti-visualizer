@@ -22,7 +22,7 @@ Registry ab, welche **Bereiche** ("Areas") in deiner Instanz existieren, und
 sucht darin jeweils einen Sensor mit `device_class: temperature` und einen
 mit `device_class: humidity`:
 
-- Bereich entspricht `outdoor_area_name` (Default: `"Außen"`) → wird **nicht**
+- Bereich entspricht `outdoor_area_name` (Default: `"Aussen"`) → wird **nicht**
   als eigener Raum geführt (kein Güte-Score, keine Lüftungsempfehlung, kein
   `binary_sensor.*`), sondern liefert die Außentemperatur/-feuchte, die für
   **alle** anderen Räume als Referenz in die Blend-Curve einfließt (siehe
@@ -59,7 +59,7 @@ der Fall.
 
 ## Außenreferenz
 
-Der Bereich `outdoor_area_name` (Default: `"Außen"`) ist **kein eigener
+Der Bereich `outdoor_area_name` (Default: `"Aussen"`) ist **kein eigener
 Lüftungs-/Schimmelrisiko-Raum**, sondern die Referenz für "draußen" in der
 Blend-Curve-Simulation aller anderen Räume:
 
@@ -73,7 +73,7 @@ Blend-Curve-Simulation aller anderen Räume:
 3. Sind weder Sensoren noch Wetter-Entity verfügbar → Poll-Zyklus wird
    übersprungen (mit Warnung im Log).
 
-Ein manueller `rooms`-Eintrag mit `name: "Außen"` wird dabei ebenfalls **nicht**
+Ein manueller `rooms`-Eintrag mit `name: "Aussen"` wird dabei ebenfalls **nicht**
 zu einem Lüftungs-Raum, sondern nur als expliziter Außensensor-Override
 behandelt (z.B. um einen von mehreren Kandidaten zu erzwingen oder Auto-
 Discovery für diesen einen Bereich zu umgehen).
@@ -125,21 +125,60 @@ persistiert und überstehen damit Addon-Neustarts.
 
 ## Güte-Score
 
+Der Güte-Score liegt fest im Bereich **0–100**: 100 = exakt am Idealpunkt,
+0 = die Abweichung erreicht oder überschreitet die konfigurierte
+Toleranzbreite (σ) – hart gedeckelt, nie negativ.
+
 ```
-Güte(Raum) = -( w_temp * (T_ist - T_ideal)² + w_feuchte * (F_abs_ist - F_abs_ideal)² )
+d_T = (T_ist - T_ideal) / sigma_temp
+d_F = (F_rel_ist - F_ideal_rel) / sigma_humidity_rel
+
+w_T = weight_temp / (weight_temp + weight_humidity)
+w_F = weight_humidity / (weight_temp + weight_humidity)
+
+D² = w_T * d_T² + w_F * d_F²
+
+Güte(Raum) = 100 * max(0, 1 - D²)
 ```
 
-- Höher (näher an 0) ist besser; 0 exakt am Idealpunkt.
-- `F_abs_ideal` wird einmal pro Raum aus `ideal_temp` + `ideal_humidity_rel` (Magnus-Formel) berechnet und bleibt danach als **fester** Zielwert für die absolute Feuchte bestehen – er skaliert nicht mit der tatsächlichen Temperatur. Das entspricht der bauphysikalischen Logik: es gibt eine feste, schimmelunkritische Feuchtemenge in der Luft, unabhängig davon, wie warm der Raum gerade tatsächlich ist.
-- `w_temp` / `w_feuchte` gewichten die beiden Anteile pro Raum.
+- `sigma_temp` / `sigma_humidity_rel` (Default `default_sigma_temp: 10.0` °C
+  bzw. `default_sigma_humidity_rel: 40.0` %-Punkte, pro Raum überschreibbar)
+  legen fest, bei welcher Abweichung der Score auf 0 fällt. Temperatur- und
+  Feuchte-Abweichung werden dadurch auf dieselbe (dimensionslose) Skala
+  gebracht, bevor sie gewichtet kombiniert werden – vorher (unbegrenzte,
+  quadrierte Rohwerte in °C² bzw. (g/m³)²) konnten `weight_temp`/
+  `weight_humidity` ihre beabsichtigte Wirkung nicht entfalten, da die beiden
+  Terme unterschiedliche Größenordnungen hatten.
+- `F_rel` ist hier **immer relative Feuchte** – auch für die simulierten
+  Blend-Punkte, die aus der Mischsimulation zunächst als absolute Feuchte
+  (g/m³) vorliegen (Mischung von Luftmassen ist physikalisch nur in absoluter
+  Feuchte korrekt). Vor der Güte-Bewertung wird die Magnus-Formel invertiert,
+  um aus dem simulierten `(T, F_abs)`-Paar wieder relative Feuchte zu
+  berechnen (`relative_humidity_from_absolute_pct` in `scoring.py`).
+- Sind `weight_temp` und `weight_humidity` beide 0, wird als Fallback
+  50/50 gewichtet (mit Log-Warnung).
 
 ### Blend-Curve
 
 `GET /api/rooms/{room}/blend-curve` liefert 11 Punkte (bei `blend_steps: 10`)
 von 0 % (aktueller Innenraumzustand) bis 100 % (vollständig Außenluft), je
-mit `{blend, temp_c, abs_humidity_gm3, guete}`. Diese Kurve ist die
-Grundlage für die geplante spätere 3D-Visualisierung (Achsen: Feuchte,
-Temperatur, Güte + Pfeil 0→100 %) sowie für die Lüftungsentscheidung selbst.
+mit `{blend, temp_c, abs_humidity_gm3, humidity_rel_pct, guete}`. Die
+Rohwerte (`temp_c`, `abs_humidity_gm3`) bleiben unverändert Grundlage für die
+geplante spätere 3D-Visualisierung (Achsen: Feuchte, Temperatur, Güte + Pfeil
+0→100 %); `guete` liegt jetzt auf der 0–100-Skala, zusätzlich wird die aus
+der Mischung zurückgerechnete relative Feuchte (`humidity_rel_pct`)
+mitgeliefert.
+
+### Tests
+
+`app/test_scoring.py` deckt die Güte-Formel ab (Idealpunkt = 100, exakte
+Toleranzgrenze = 0, weit jenseits der Toleranz weiterhin 0 statt negativ)
+sowie den Roundtrip der invertierten Magnus-Formel. Ausführen mit:
+
+```
+cd ha-lueftungsguete/app
+python -m unittest test_scoring.py
+```
 
 ## REST-Endpunkte (über Ingress erreichbar)
 
@@ -155,11 +194,13 @@ auto_discover_rooms: true
 area_discovery_interval_minutes: 30
 no_window_areas:
   - "Bad"
-outdoor_area_name: "Außen"       # Bereich = Außenreferenz, kein eigener Raum
+outdoor_area_name: "Aussen"      # Bereich = Außenreferenz, kein eigener Raum
 default_ideal_temp: 21.0
 default_ideal_humidity_rel: 45.0
 default_weight_temp: 1.0
 default_weight_humidity: 1.0
+default_sigma_temp: 10.0         # °C-Abweichung, bei der die Güte auf 0 fällt
+default_sigma_humidity_rel: 40.0 # %-Punkte-Abweichung (relative Feuchte), bei der die Güte auf 0 fällt
 
 # Optional: manuelle Overrides. Name == HA-Bereichsname => ersetzt Auto-Discovery
 # für genau diesen Raum. Name ohne passenden Bereich => komplett manueller Raum.
@@ -171,6 +212,8 @@ rooms:
     ideal_humidity_rel: 50.0
     weight_temp: 1.0
     weight_humidity: 1.0
+    sigma_temp: null             # optional: überschreibt default_sigma_temp für diesen Raum
+    sigma_humidity_rel: null     # optional: überschreibt default_sigma_humidity_rel für diesen Raum
     binary_sensor_suffix: null   # optional: überschreibt den Auto-Slug (z.B. bei Umlaut-Problemen)
 no_window_rooms: []              # normalerweise leer, "Bad" kommt über no_window_areas automatisch
 mold_risk_threshold: 12.0        # g/m³ absolute Feuchte, ab der Schimmelrisiko = an
@@ -178,7 +221,7 @@ mold_risk_hysteresis: 1.5        # g/m³ Abstand, um wieder auf "aus" zu schalte
 
 outdoor_weather_entity: "weather.forecast_home"  # Fallback, falls outdoor_area_name keine Sensoren liefert
 blend_steps: 10                  # muss 100 ohne Rest teilen
-delta_guete_threshold: 0.5
+delta_guete_threshold: 5.0       # auf 0-100-Skala kalibriert (war 0.5 auf der alten, unbegrenzten Skala)
 stability_minutes: 10
 poll_interval_seconds: 60
 notify_targets:
@@ -262,10 +305,13 @@ Eintrag explizit setzen.
   für alle `no_window_areas`/`no_window_rooms`, sofern nicht pro Raum
   überschrieben). Diesen Wert bitte mit der bisherigen Logik abgleichen und
   anpassen.
-- **`delta_guete_threshold` Default (0.5)**: mangels Referenzdaten aus der
-  bestehenden Installation ein plausibler, aber nicht empirisch
-  hergeleiteter Wert. Nach ein paar Tagen Betrieb über `/api/rooms`
-  (`delta_guete`-Werte) beobachten und ggf. nachjustieren.
+- **`delta_guete_threshold` Default (5.0 auf der 0-100-Skala)**: mangels
+  Referenzdaten aus der bestehenden Installation ein plausibler, aber nicht
+  empirisch hergeleiteter Wert. Nach ein paar Tagen Betrieb über `/api/rooms`
+  (`delta_guete`-Werte) beobachten und ggf. nachjustieren. Ebenso die
+  `sigma_temp`/`sigma_humidity_rel`-Defaults (10 °C / 40 %-Punkte) – falls
+  die Güte-Werte im Alltag zu schnell oder zu langsam auf 0 fallen, hier
+  justieren.
 - **Keine Notification beim Bad-Schimmelrisiko**: Der Auftrag verlangt
   Push-Notifications nur für die Lüftungsempfehlung, nicht fürs Bad. Falls
   gewünscht, ließe sich das analog ergänzen.

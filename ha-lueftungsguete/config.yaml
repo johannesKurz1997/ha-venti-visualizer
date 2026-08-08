@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.2.2"
+version: "0.3.0"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
@@ -20,11 +20,13 @@ options:
   area_discovery_interval_minutes: 30
   no_window_areas:
     - "Bad"
-  outdoor_area_name: "Außen"
+  outdoor_area_name: "Aussen"
   default_ideal_temp: 21.0
   default_ideal_humidity_rel: 45.0
   default_weight_temp: 1.0
   default_weight_humidity: 1.0
+  default_sigma_temp: 10.0
+  default_sigma_humidity_rel: 40.0
 
   rooms: []
   no_window_rooms: []
@@ -33,7 +35,7 @@ options:
 
   outdoor_weather_entity: "weather.forecast_home"
   blend_steps: 10
-  delta_guete_threshold: 0.5
+  delta_guete_threshold: 5.0
   stability_minutes: 10
   poll_interval_seconds: 60
   notify_targets:
@@ -52,6 +54,8 @@ schema:
   default_ideal_humidity_rel: "float(0,100)"
   default_weight_temp: "float(0,)"
   default_weight_humidity: "float(0,)"
+  default_sigma_temp: "float(0.1,)"
+  default_sigma_humidity_rel: "float(0.1,)"
 
   rooms:
     - name: "str"
@@ -61,6 +65,8 @@ schema:
       ideal_humidity_rel: "float(0,100)"
       weight_temp: "float(0,)"
       weight_humidity: "float(0,)"
+      sigma_temp: "float(0.1,)?"
+      sigma_humidity_rel: "float(0.1,)?"
       binary_sensor_suffix: "str?"
   no_window_rooms:
     - name: "str"

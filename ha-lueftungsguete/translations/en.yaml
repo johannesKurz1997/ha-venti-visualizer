@@ -10,7 +10,7 @@ configuration:
     description: "Names of Home Assistant Areas (e.g. 'Bad') that should be treated as mold-risk-only rooms instead of participating in the ventilation Güte score."
   outdoor_area_name:
     name: "Outdoor reference area"
-    description: "Name of the Home Assistant Area (e.g. 'Außen') whose temperature/humidity sensors serve as the outdoor reference for all rooms. This area is never scored as a room itself and takes precedence over 'Outdoor weather entity' when its sensors are available."
+    description: "Name of the Home Assistant Area (e.g. 'Aussen') whose temperature/humidity sensors serve as the outdoor reference for all rooms. This area is never scored as a room itself and takes precedence over 'Outdoor weather entity' when its sensors are available."
   default_ideal_temp:
     name: "Default ideal temperature"
     description: "Ideal temperature (°C) applied to auto-discovered rooms that don't have a manual override."
@@ -23,6 +23,12 @@ configuration:
   default_weight_humidity:
     name: "Default humidity weight"
     description: "Weight of the humidity term in the Güte score for auto-discovered rooms."
+  default_sigma_temp:
+    name: "Default temperature tolerance (sigma)"
+    description: "Temperature deviation (°C) from the ideal value at which the Güte score reaches 0 for auto-discovered rooms. Can be overridden per room."
+  default_sigma_humidity_rel:
+    name: "Default humidity tolerance (sigma)"
+    description: "Relative humidity deviation (percentage points) from the ideal value at which the Güte score reaches 0 for auto-discovered rooms. Can be overridden per room."
   rooms:
     name: "Rooms (manual)"
     description: "Rooms with a window that participate in the ventilation quality score. A manual entry with a name matching a Home Assistant Area overrides the auto-discovered sensors/defaults for that room."
@@ -43,7 +49,7 @@ configuration:
     description: "Step size for the indoor/outdoor air blend simulation (0-100%). Must divide 100 evenly."
   delta_guete_threshold:
     name: "Delta-Güte threshold"
-    description: "Minimum improvement in the Güte score (blend=100 vs blend=0) required to recommend airing out."
+    description: "Minimum improvement in the Güte score (blend=100 vs blend=0) required to recommend airing out, on the fixed 0-100 Güte scale (default 5.0 - was 0.5 on the old, unbounded scale)."
   stability_minutes:
     name: "Stability window (minutes)"
     description: "How long the positive delta must persist before a ventilation recommendation is triggered."

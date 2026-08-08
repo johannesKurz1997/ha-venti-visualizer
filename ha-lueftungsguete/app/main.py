@@ -113,7 +113,7 @@ class Controller:
     def _build_effective_rooms(
         self,
     ) -> tuple[list[RoomConfig], list[NoWindowRoomConfig], tuple[str, str] | None]:
-        """Baut die effektive Raumliste; der `outdoor_area_name`-Raum (Default "Außen")
+        """Baut die effektive Raumliste; der `outdoor_area_name`-Raum (Default "Aussen")
         wird dabei nie als eigener Lüftungs-/Schimmelrisiko-Raum geführt, sondern als
         Außenreferenz (temp_entity, humidity_entity) zurückgegeben (siehe _resolve_outdoor).
         """
@@ -201,10 +201,17 @@ class Controller:
 
         abs_in = absolute_humidity_gm3(temp_in, hum_in)
         ideal_abs = absolute_humidity_gm3(room.ideal_temp, room.ideal_humidity_rel)
+        sigma_temp = room.sigma_temp if room.sigma_temp is not None else self.options.default_sigma_temp
+        sigma_humidity_rel = (
+            room.sigma_humidity_rel
+            if room.sigma_humidity_rel is not None
+            else self.options.default_sigma_humidity_rel
+        )
 
         curve = blend_curve(
             temp_in, abs_in, temp_out, abs_out,
-            room.ideal_temp, ideal_abs, room.weight_temp, room.weight_humidity,
+            room.ideal_temp, room.ideal_humidity_rel, room.weight_temp, room.weight_humidity,
+            sigma_temp, sigma_humidity_rel,
             step=self.options.blend_steps,
         )
         guete_0 = curve[0].guete
@@ -219,7 +226,7 @@ class Controller:
             {
                 "friendly_name": f"Lüften {room.name}",
                 "device_class": "opening",
-                "delta_guete": round(delta, 4),
+                "delta_guete": round(delta, 2),
                 "stable_since": stable_since,
             },
         )
@@ -235,9 +242,9 @@ class Controller:
             {
                 "ts": _now_iso(),
                 "room": room.name,
-                "guete_0": round(guete_0, 4),
-                "guete_100": round(guete_100, 4),
-                "delta_guete": round(delta, 4),
+                "guete_0": round(guete_0, 2),
+                "guete_100": round(guete_100, 2),
+                "delta_guete": round(delta, 2),
                 "luften_empfohlen": recommend,
             }
         )
@@ -254,12 +261,14 @@ class Controller:
             "ideal_temp": room.ideal_temp,
             "ideal_humidity_rel": room.ideal_humidity_rel,
             "ideal_abs_humidity": round(ideal_abs, 3),
+            "sigma_temp": sigma_temp,
+            "sigma_humidity_rel": sigma_humidity_rel,
             "outdoor_temp": round(temp_out, 2),
             "outdoor_humidity_rel": round(hum_out, 2),
             "outdoor_abs_humidity": round(abs_out, 3),
-            "guete_current": round(guete_0, 4),
-            "guete_full_outside": round(guete_100, 4),
-            "delta_guete": round(delta, 4),
+            "guete_current": round(guete_0, 2),
+            "guete_full_outside": round(guete_100, 2),
+            "delta_guete": round(delta, 2),
             "delta_guete_threshold": self.options.delta_guete_threshold,
             "luften_empfohlen": recommend,
             "stable_since": stable_since,
@@ -420,14 +429,18 @@ async def api_blend_curve(room_key: str) -> JSONResponse:
     curve = blend_curve(
         cached["temp_in"], cached["abs_humidity_in"],
         cached["outdoor_temp"], cached["outdoor_abs_humidity"],
-        room.ideal_temp, ideal_abs, room.weight_temp, room.weight_humidity,
+        room.ideal_temp, room.ideal_humidity_rel, room.weight_temp, room.weight_humidity,
+        cached["sigma_temp"], cached["sigma_humidity_rel"],
         step=controller.options.blend_steps,
     )
     return JSONResponse(
         {
             "room": room.name,
             "ideal_temp": room.ideal_temp,
+            "ideal_humidity_rel": room.ideal_humidity_rel,
             "ideal_abs_humidity": round(ideal_abs, 3),
+            "sigma_temp": cached["sigma_temp"],
+            "sigma_humidity_rel": cached["sigma_humidity_rel"],
             "points": [p.to_dict() for p in curve],
         }
     )
@@ -452,6 +465,9 @@ _INDEX_HTML = """<!doctype html>
   .badge { padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem; }
   .on { background: #1f6f3a; color: #d7ffe0; }
   .off { background: #333; color: #aaa; }
+  .g-good { background: #1f6f3a; color: #d7ffe0; }
+  .g-mid { background: #6b5b1f; color: #ffe9b3; }
+  .g-bad { background: #6f1f1f; color: #ffd7d7; }
   .muted { color: #888; font-size: 0.85rem; }
 </style>
 </head>
@@ -460,13 +476,19 @@ _INDEX_HTML = """<!doctype html>
 <p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code>, <code>/api/no-window-rooms</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
 <h2>Räume (mit Fenster)</h2>
 <table id="rooms"><thead><tr>
-  <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte</th><th>ΔGüte</th><th>Lüften?</th>
+  <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte (0-100)</th><th>ΔGüte</th><th>Lüften?</th>
 </tr></thead><tbody></tbody></table>
 <h2>Räume ohne Fenster (Schimmelrisiko)</h2>
 <table id="no-window"><thead><tr>
   <th>Raum</th><th>T</th><th>F rel</th><th>F abs</th><th>Schimmelrisiko</th>
 </tr></thead><tbody></tbody></table>
 <script>
+function guteClass(v) {
+  if (v > 70) return 'g-good';
+  if (v >= 40) return 'g-mid';
+  return 'g-bad';
+}
+
 async function refresh() {
   try {
     const rooms = await (await fetch('api/rooms')).json();
@@ -475,8 +497,8 @@ async function refresh() {
       <td>${r.name}</td>
       <td>${r.temp_in} °C</td>
       <td>${r.humidity_rel_in} %</td>
-      <td>${r.guete_current}</td>
-      <td>${r.delta_guete}</td>
+      <td><span class="badge ${guteClass(r.guete_current)}">${r.guete_current.toFixed(1)}</span></td>
+      <td>${r.delta_guete.toFixed(1)}</td>
       <td><span class="badge ${r.luften_empfohlen ? 'on' : 'off'}">${r.luften_empfohlen ? 'ja' : 'nein'}</span></td>
     </tr>`).join('');
 
