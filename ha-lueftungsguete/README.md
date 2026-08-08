@@ -174,18 +174,31 @@ diese bleibt unverändert erreichbar) zeigt einen interaktiven 3D-Plot via
 [Plotly.js](https://plotly.com/javascript/) (per CDN eingebunden, kein
 Build-Step, keine neue Backend-Abhängigkeit):
 
-- **Achsen** (fest, kein Autoscale): X = Temperatur 10–35 °C, Y = relative
-  Feuchte 0–100 %, Z = Güte 0–100.
+- **Achsen** (dynamisch, kein Plotly-Autoscale): X = Temperatur, Y = relative
+  Feuchte, Z = Güte 0–100. Der sichtbare Bereich wird bei jedem Redraw eng um
+  die tatsächlich geplotteten Werte gelegt (`paddedRange()`: Min/Max aller
+  aktuellen Punkte + ca. 15 % Puffer, mit Mindestbreite gegen einen entarteten
+  Bereich bei sehr ähnlichen Werten) statt einer festen, oft halbleeren
+  10–35 °C-/0–100-Skala – Ziel ist ein fokussierter statt ausufernder Plot.
+  Nebeneffekt: der Ausschnitt verschiebt sich leicht zwischen Polls, wenn sich
+  die Werte ändern (kein visuell 100 % stabiler Fixpunkt mehr).
 - **Räume mit Fenster**: Linie durch alle 11 Blend-Punkte (0→100 % Außenluft),
   Farbe pro Segment interpoliert zwischen Grau (keine Änderung), Grün
   (Verbesserung ggü. dem aktuellen Zustand) und Rot (Verschlechterung) –
-  bezogen auf `Güte(blend=100%) - Güte(blend=aktuell)` an diesem Punkt.
+  bezogen auf `Güte(blend=100%) - Güte(blend=aktuell)` an diesem Punkt, mit
+  voller Farbsättigung schon ab ±25 Güte-Punkten Unterschied (bewusst kräftige,
+  gut sichtbare Farben statt eines blassen Verlaufs über den vollen 0–100-Bereich).
   Größerer Marker am aktuellen Zustand (blend=0 %, dient auch als
-  Legenden-Symbol), Pfeilspitze (`cone`-Trace) am 100%-Endpunkt, kleiner
-  Diamant-Marker am Idealpunkt `(ideal_temp, ideal_humidity_rel, 100)`.
-- **Bad** (kein Fenster, kein Güte-Score): einzelner grauer Diamant-Marker
-  ohne Pfad/Pfeil; Hover zeigt statt Güte den Schimmelrisiko-Status, die
-  Hover-Box ist rot (Risiko) bzw. grün (ok) eingefärbt.
+  Legenden-Symbol), Pfeilspitze (`cone`-Trace) am 100%-Endpunkt in derselben
+  kräftigen Farbe, kleiner Diamant-Marker am Idealpunkt
+  `(ideal_temp, ideal_humidity_rel, 100)`.
+- **Außenreferenz**: einzelner blauer Quadrat-Marker bei `(temp, humidity_rel, 0)`
+  mit dem aktuellen Wert aus `GET /api/outdoor` (siehe unten); Hover zeigt
+  Bereichsname und ob gerade der Wetter-Fallback statt echter Sensoren aktiv ist.
+- **Bad** (kein Fenster, kein Güte-Score) taucht in der 3D-Ansicht bewusst
+  nicht auf (weiterhin nur in der Tabelle sichtbar) – Schimmelrisiko-Bewertung
+  und Güte-Score sind fachlich getrennte Dinge, ein gemeinsamer 3D-Plot dafür
+  bringt keinen Mehrwert.
 - **Dark Theme**: Hintergrund transparent, Achsen/Gitter/Legende in den
   Farben der bestehenden Ingress-Seite (`#e6e6e6` Text, `#333` Gitter).
 - **Auto-Rotate**: Kamera dreht sich beim allerersten Rendern automatisch
@@ -201,8 +214,9 @@ Build-Step, keine neue Backend-Abhängigkeit):
   Hintergrund weiter.
 
 **Bekannte Annahmen/offene Punkte** (nicht aus dem Auftrag eindeutig ableitbar):
-- Der Bad-Marker wird auf `z=0` (Boden der Güte-Achse) platziert, da für Bad
-  kein Güte-Wert existiert und keine andere Position vorgegeben war.
+- Der Außen-Marker wird auf `z=0` (Boden der Güte-Achse) platziert, da die
+  Außenluft selbst keinen Güte-Wert hat (Güte ist immer relativ zum
+  Idealpunkt eines Raums) und keine andere Position vorgegeben war.
 - Cone-Größe (`sizeref`) und Rotationsgeschwindigkeit/-dauer sind plausible
   Startwerte – da in dieser Umgebung kein Browser zum visuellen Testen zur
   Verfügung stand, ggf. nach dem ersten Blick auf die echte Seite anpassen.
@@ -223,6 +237,7 @@ python -m unittest test_scoring.py
 - `GET /api/rooms` – aktuelle Werte + Güte aller Lüftungsräume (manuell + auto-erkannt)
 - `GET /api/rooms/{room}/blend-curve` – die Blend-Punkte für einen Raum (Name oder Slug, z.B. `wohnzimmer`)
 - `GET /api/no-window-rooms` – aktuelle Werte + Schimmelrisiko aller fensterlosen Räume
+- `GET /api/outdoor` – aktueller Außenwert (`name`, `temp`, `humidity_rel`, `abs_humidity`, `source`: `"area"` oder `"weather"`), auch in der Tabellenansicht und im 3D-Plot sichtbar
 - `GET /api/config` – aktuell nur `poll_interval_seconds`, für den Refresh-Rhythmus der 3D-Ansicht im Frontend
 - `GET /health` – Health-Check
 

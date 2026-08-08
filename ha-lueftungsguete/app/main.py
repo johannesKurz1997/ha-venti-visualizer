@@ -47,6 +47,7 @@ class Controller:
         self.lock = asyncio.Lock()
         self.latest_rooms: dict[str, dict[str, Any]] = {}
         self.latest_no_window_rooms: dict[str, dict[str, Any]] = {}
+        self.latest_outdoor: dict[str, Any] | None = None
         self._room_configs: dict[str, RoomConfig] = {}
         self._discovered: dict[str, DiscoveredRoom] = {}
         self._last_discovery: datetime | None = None
@@ -62,7 +63,7 @@ class Controller:
 
         effective_rooms, effective_no_window, outdoor_entities = self._build_effective_rooms()
 
-        temp_out, hum_out = self._resolve_outdoor(states, outdoor_entities)
+        temp_out, hum_out, outdoor_source = self._resolve_outdoor(states, outdoor_entities)
         if temp_out is None or hum_out is None:
             logger.warning("Außenwerte nicht verfügbar - überspringe Zyklus")
             return
@@ -92,6 +93,14 @@ class Controller:
             self.latest_rooms = rooms_result
             self.latest_no_window_rooms = no_window_result
             self._room_configs = room_configs
+            self.latest_outdoor = {
+                "name": self.options.outdoor_area_name,
+                "temp": round(temp_out, 2),
+                "humidity_rel": round(hum_out, 2),
+                "abs_humidity": round(abs_out, 3),
+                "source": outdoor_source,
+                "updated_at": _now_iso(),
+            }
 
     async def _maybe_refresh_discovery(self, states: dict[str, dict]) -> None:
         now = datetime.now(timezone.utc)
@@ -164,7 +173,7 @@ class Controller:
 
     def _resolve_outdoor(
         self, states: dict[str, dict], outdoor_entities: tuple[str, str] | None
-    ) -> tuple[float | None, float | None]:
+    ) -> tuple[float | None, float | None, str]:
         """Außenwerte bevorzugt vom `outdoor_area_name`-Raum (echte Sensoren), sonst
         Fallback auf `outdoor_weather_entity` (Wetter-Vorhersage-Attribute)."""
         if outdoor_entities is not None:
@@ -172,7 +181,7 @@ class Controller:
             temp = _parse_float(states.get(temp_entity))
             hum = _parse_float(states.get(humidity_entity))
             if temp is not None and hum is not None:
-                return temp, hum
+                return temp, hum, "area"
             logger.warning(
                 "Außenreferenz-Raum '%s' liefert keine Sensordaten, "
                 "verwende outdoor_weather_entity als Fallback",
@@ -180,9 +189,11 @@ class Controller:
             )
 
         if self.options.outdoor_weather_entity:
-            return _outdoor_from_weather(states.get(self.options.outdoor_weather_entity))
+            temp, hum = _outdoor_from_weather(states.get(self.options.outdoor_weather_entity))
+            if temp is not None and hum is not None:
+                return temp, hum, "weather"
 
-        return None, None
+        return None, None, "unavailable"
 
     async def _process_room(
         self,
@@ -419,6 +430,15 @@ async def api_no_window_rooms() -> JSONResponse:
         return JSONResponse(list(controller.latest_no_window_rooms.values()))
 
 
+@app.get("/api/outdoor")
+async def api_outdoor() -> JSONResponse:
+    controller = _controller(app)
+    async with controller.lock:
+        if controller.latest_outdoor is None:
+            raise HTTPException(status_code=503, detail="Noch keine Außenwerte verfügbar")
+        return JSONResponse(controller.latest_outdoor)
+
+
 @app.get("/api/rooms/{room_key}/blend-curve")
 async def api_blend_curve(room_key: str) -> JSONResponse:
     controller = _controller(app)
@@ -489,7 +509,7 @@ _INDEX_HTML = """<!doctype html>
 </head>
 <body>
 <h1>Lüftungsgüte</h1>
-<p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code>, <code>/api/no-window-rooms</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
+<p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code>, <code>/api/no-window-rooms</code>, <code>/api/outdoor</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="table">Tabelle</button>
@@ -497,6 +517,7 @@ _INDEX_HTML = """<!doctype html>
 </div>
 
 <div id="tab-table" class="tab-panel active">
+<p id="outdoor-status" class="muted">Außen: –</p>
 <h2>Räume (mit Fenster)</h2>
 <table id="rooms"><thead><tr>
   <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte (0-100)</th><th>ΔGüte</th><th>Lüften?</th>
@@ -508,7 +529,7 @@ _INDEX_HTML = """<!doctype html>
 </div>
 
 <div id="tab-plot3d" class="tab-panel">
-<p class="muted">X = Temperatur (10-35 °C), Y = relative Feuchte (0-100 %), Z = Güte (0-100). Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot/orange = Verschlechterung. Diamant = Idealpunkt bzw. Bad (Schimmelrisiko statt Güte).</p>
+<p class="muted">X = Temperatur (°C), Y = relative Feuchte (%), Z = Güte (0-100) - Achsen passen sich automatisch eng an die aktuellen Werte an. Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot = Verschlechterung. Diamant = Idealpunkt des Raums. Blaues Quadrat = aktuelle Außenreferenz.</p>
 <div id="plot3d"></div>
 </div>
 
@@ -520,6 +541,15 @@ function guteClass(v) {
 }
 
 async function refresh() {
+  try {
+    const outdoor = await (await fetch('api/outdoor')).json();
+    const outdoorEl = document.getElementById('outdoor-status');
+    const sourceLabel = outdoor.source === 'weather' ? ' (Wetter-Fallback)' : '';
+    outdoorEl.textContent = `Außen (${outdoor.name}): ${outdoor.temp} °C, ${outdoor.humidity_rel} % rel.${sourceLabel}`;
+  } catch (e) {
+    console.error(e);
+  }
+
   try {
     const rooms = await (await fetch('api/rooms')).json();
     const roomsBody = document.querySelector('#rooms tbody');
@@ -563,9 +593,11 @@ function lerpColor(a, b, t) {
 function deltaColor(delta) {
   // delta = Güte an diesem Punkt minus Güte am 0%-Punkt (aktueller Zustand).
   // Grau = keine Änderung, Grün = Verbesserung, Rot = Verschlechterung.
-  const t = Math.max(-1, Math.min(1, delta / 100));
-  if (t >= 0) return lerpColor('#8a8f98', '#22c55e', t);
-  return lerpColor('#8a8f98', '#ef4444', -t);
+  // Volle Sättigung schon ab ±25 Güte-Punkten (statt ±100) für kräftigere,
+  // klar erkennbare Farben statt eines blassen Verlaufs.
+  const t = Math.max(-1, Math.min(1, delta / 25));
+  if (t >= 0) return lerpColor('#4b5563', '#16a34a', t);
+  return lerpColor('#4b5563', '#dc2626', -t);
 }
 
 function baseColorForRoom(slug) {
@@ -592,15 +624,43 @@ function pointHover(name, blend, p) {
   return `<b>${name}</b><br>Blend ${blend}%<br>T=${p.temp_c}°C<br>F rel=${p.humidity_rel_pct}%<br>Güte=${p.guete}<extra></extra>`;
 }
 
+// Achsenbereich eng um die tatsächlichen Werte legen (statt fester 0-100-artiger
+// Skalen), damit der Plot fokussiert bleibt statt viel leeren Raum zu zeigen.
+// minSpan verhindert einen zu enger/entarteten Bereich bei sehr ähnlichen Werten,
+// hardMin/hardMax kappen nur das Padding an den physikalisch sinnvollen Rändern.
+function paddedRange(values, padFrac, minSpan, hardMin, hardMax) {
+  if (!values.length) return [hardMin, hardMax];
+  let lo = Math.min(...values);
+  let hi = Math.max(...values);
+  let span = hi - lo;
+  if (span < minSpan) {
+    const mid = (hi + lo) / 2;
+    lo = mid - minSpan / 2;
+    hi = mid + minSpan / 2;
+    span = minSpan;
+  }
+  const pad = span * padFrac;
+  lo -= pad;
+  hi += pad;
+  if (hardMin !== undefined) lo = Math.max(lo, hardMin);
+  if (hardMax !== undefined) hi = Math.min(hi, hardMax);
+  return [lo, hi];
+}
+
 async function refreshPlot3d() {
   const gd = document.getElementById('plot3d');
-  let rooms, noWindowRooms;
+  let rooms, outdoor;
   try {
     rooms = await (await fetch('api/rooms')).json();
-    noWindowRooms = await (await fetch('api/no-window-rooms')).json();
   } catch (e) {
     console.error(e);
     return;
+  }
+  try {
+    outdoor = await (await fetch('api/outdoor')).json();
+  } catch (e) {
+    console.error(e);
+    outdoor = null;
   }
 
   const curves = await Promise.all(rooms.map(async r => {
@@ -615,6 +675,10 @@ async function refreshPlot3d() {
   const traces = [];
   const segmentSteps = [];
   const finalStepExtras = [];
+  const xs = [], ys = [], zs = [];
+  function trackBounds(x, y, z) {
+    xs.push(x); ys.push(y); zs.push(z);
+  }
 
   rooms.forEach((room, i) => {
     const curveData = curves[i];
@@ -622,6 +686,8 @@ async function refreshPlot3d() {
     const points = curveData.points;
     const guete0 = points[0].guete;
     const baseColor = baseColorForRoom(room.slug);
+    points.forEach(p => trackBounds(p.temp_c, p.humidity_rel_pct, p.guete));
+    trackBounds(room.ideal_temp, room.ideal_humidity_rel, 100);
 
     traces.push({
       type: 'scatter3d', mode: 'markers',
@@ -672,18 +738,22 @@ async function refreshPlot3d() {
     finalStepExtras.push(coneIdx);
   });
 
-  noWindowRooms.forEach(room => {
-    const riskColor = room.schimmelrisiko ? '#ef4444' : '#22c55e';
+  if (outdoor) {
+    const sourceLabel = outdoor.source === 'weather' ? ' (Wetter-Fallback)' : '';
+    trackBounds(outdoor.temp, outdoor.humidity_rel, 0);
     traces.push({
       type: 'scatter3d', mode: 'markers',
-      x: [room.temp], y: [room.humidity_rel], z: [0],
-      marker: { size: 8, symbol: 'diamond', color: '#888888' },
-      name: room.name,
-      hoverlabel: { bgcolor: riskColor },
-      hovertemplate: `<b>${room.name}</b><br>T=${room.temp}°C<br>F rel=${room.humidity_rel}%<br>Schimmelrisiko: ${room.schimmelrisiko ? 'ja' : 'nein'}<extra></extra>`,
+      x: [outdoor.temp], y: [outdoor.humidity_rel], z: [0],
+      marker: { size: 8, symbol: 'square', color: '#38bdf8' },
+      name: `Außen (${outdoor.name})`,
+      hovertemplate: `<b>Außen (${outdoor.name})</b><br>T=${outdoor.temp}°C<br>F rel=${outdoor.humidity_rel}%${sourceLabel}<extra></extra>`,
       showlegend: true,
     });
-  });
+  }
+
+  const xRange = paddedRange(xs, 0.15, 6, 0, 40);
+  const yRange = paddedRange(ys, 0.15, 20, 0, 100);
+  const zRange = paddedRange(zs, 0.15, 20, 0, 100);
 
   const axisStyle = { gridcolor: '#333', zerolinecolor: '#333', color: '#e6e6e6', backgroundcolor: 'rgba(0,0,0,0)' };
   const layout = {
@@ -694,9 +764,9 @@ async function refreshPlot3d() {
     uirevision: 'lueftungsguete-3d',
     legend: { font: { color: '#e6e6e6' } },
     scene: {
-      xaxis: Object.assign({ title: 'T (°C)', range: [10, 35] }, axisStyle),
-      yaxis: Object.assign({ title: 'F rel (%)', range: [0, 100] }, axisStyle),
-      zaxis: Object.assign({ title: 'Güte', range: [0, 100] }, axisStyle),
+      xaxis: Object.assign({ title: 'T (°C)', range: xRange }, axisStyle),
+      yaxis: Object.assign({ title: 'F rel (%)', range: yRange }, axisStyle),
+      zaxis: Object.assign({ title: 'Güte', range: zRange }, axisStyle),
     },
   };
 
