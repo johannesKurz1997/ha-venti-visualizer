@@ -1,0 +1,25 @@
+configuration:
+  rooms:
+    name: "Rooms"
+    description: "Rooms with a window that participate in the ventilation quality score."
+  bad:
+    name: "Bathroom (no window)"
+    description: "Handled separately: mold-risk assessment based on absolute humidity only, no ventilation recommendation."
+  outdoor_weather_entity:
+    name: "Outdoor weather entity"
+    description: "Weather entity providing current outdoor temperature/humidity attributes (e.g. weather.forecast_home)."
+  blend_steps:
+    name: "Blend step size (%)"
+    description: "Step size for the indoor/outdoor air blend simulation (0-100%). Must divide 100 evenly."
+  delta_guete_threshold:
+    name: "Delta-Güte threshold"
+    description: "Minimum improvement in the Güte score (blend=100 vs blend=0) required to recommend airing out."
+  stability_minutes:
+    name: "Stability window (minutes)"
+    description: "How long the positive delta must persist before a ventilation recommendation is triggered."
+  poll_interval_seconds:
+    name: "Poll interval (seconds)"
+    description: "How often sensor states are read and the score is recalculated."
+  notify_targets:
+    name: "Notification targets"
+    description: "Pairs of notify service and person entity; a notification is only sent while the person is home."

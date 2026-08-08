@@ -1,0 +1,79 @@
+name: "Lüftungsgüte"
+version: "0.1.0"
+slug: "lueftungsguete"
+description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
+url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:air-filter
+panel_title: "Lüftungsgüte"
+
+options:
+  rooms:
+    - name: "Wohnzimmer"
+      temp_entity: "sensor.wohnzimmer_temperature"
+      humidity_entity: "sensor.wohnzimmer_humidity"
+      ideal_temp: 21.0
+      ideal_humidity_rel: 45.0
+      weight_temp: 1.0
+      weight_humidity: 1.0
+    - name: "Schlafzimmer"
+      temp_entity: "sensor.schlafzimmer_temperature"
+      humidity_entity: "sensor.schlafzimmer_humidity"
+      ideal_temp: 18.0
+      ideal_humidity_rel: 50.0
+      weight_temp: 1.0
+      weight_humidity: 1.0
+    - name: "Büro"
+      temp_entity: "sensor.buro_temperature"
+      humidity_entity: "sensor.buro_humidity"
+      ideal_temp: 21.0
+      ideal_humidity_rel: 45.0
+      weight_temp: 1.0
+      weight_humidity: 1.0
+  bad:
+    temp_entity: "sensor.bad_temperature"
+    humidity_entity: "sensor.bad_humidity"
+    mold_risk_threshold: 12.0
+    mold_risk_hysteresis: 1.5
+  outdoor_weather_entity: "weather.forecast_home"
+  blend_steps: 10
+  delta_guete_threshold: 0.5
+  stability_minutes: 10
+  poll_interval_seconds: 60
+  notify_targets:
+    - service: "notify.mobile_app_johannes_handy"
+      person_entity: "person.johannes_kurz"
+    - service: "notify.mobile_app_linas_handy"
+      person_entity: "person.lina_kollmann"
+
+schema:
+  rooms:
+    - name: "str"
+      temp_entity: "str"
+      humidity_entity: "str"
+      ideal_temp: "float"
+      ideal_humidity_rel: "float(0,100)"
+      weight_temp: "float(0,)"
+      weight_humidity: "float(0,)"
+      binary_sensor_suffix: "str?"
+  bad:
+    temp_entity: "str"
+    humidity_entity: "str"
+    mold_risk_threshold: "float(0,)"
+    mold_risk_hysteresis: "float(0,)"
+  outdoor_weather_entity: "str"
+  blend_steps: "int(1,50)"
+  delta_guete_threshold: "float"
+  stability_minutes: "int(1,120)"
+  poll_interval_seconds: "int(10,3600)"
+  notify_targets:
+    - service: "str"
+      person_entity: "str"
