@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.4.2"
+version: "0.4.3"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"

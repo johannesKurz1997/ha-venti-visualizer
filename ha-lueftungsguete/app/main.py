@@ -529,7 +529,7 @@ _INDEX_HTML = """<!doctype html>
 </div>
 
 <div id="tab-plot3d" class="tab-panel">
-<p class="muted">X = Temperatur (°C), Y = relative Feuchte (%), Z = Güte (0-100) - Achsen passen sich automatisch eng an die aktuellen Werte an. Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot = Verschlechterung. Diamant = Idealpunkt des Raums. Blaues Quadrat = aktuelle Außenreferenz.</p>
+<p class="muted">X = Temperatur (°C), Y = relative Feuchte (%), Z = Güte (0-100) - Achsen passen sich automatisch eng an die aktuellen Werte an. Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot = Verschlechterung. Diamant = Idealpunkt des Raums. Aktuelle Außenwerte siehe Tabellen-Tab.</p>
 <div id="plot3d"></div>
 </div>
 
@@ -649,18 +649,12 @@ function paddedRange(values, padFrac, minSpan, hardMin, hardMax) {
 
 async function refreshPlot3d() {
   const gd = document.getElementById('plot3d');
-  let rooms, outdoor;
+  let rooms;
   try {
     rooms = await (await fetch('api/rooms')).json();
   } catch (e) {
     console.error(e);
     return;
-  }
-  try {
-    outdoor = await (await fetch('api/outdoor')).json();
-  } catch (e) {
-    console.error(e);
-    outdoor = null;
   }
 
   const curves = await Promise.all(rooms.map(async r => {
@@ -738,22 +732,9 @@ async function refreshPlot3d() {
     finalStepExtras.push(coneIdx);
   });
 
-  if (outdoor) {
-    const sourceLabel = outdoor.source === 'weather' ? ' (Wetter-Fallback)' : '';
-    trackBounds(outdoor.temp, outdoor.humidity_rel, 0);
-    traces.push({
-      type: 'scatter3d', mode: 'markers',
-      x: [outdoor.temp], y: [outdoor.humidity_rel], z: [0],
-      marker: { size: 8, symbol: 'square', color: '#38bdf8' },
-      name: `Außen (${outdoor.name})`,
-      hovertemplate: `<b>Außen (${outdoor.name})</b><br>T=${outdoor.temp}°C<br>F rel=${outdoor.humidity_rel}%${sourceLabel}<extra></extra>`,
-      showlegend: true,
-    });
-  }
-
   const xRange = paddedRange(xs, 0.15, 6, 0, 40);
   const yRange = paddedRange(ys, 0.15, 20, 0, 100);
-  const zRange = paddedRange(zs, 0.15, 20, 0, 100);
+  const zRange = paddedRange(zs, 0.1, 8, 0, 100);
 
   const axisStyle = { gridcolor: '#333', zerolinecolor: '#333', color: '#e6e6e6', backgroundcolor: 'rgba(0,0,0,0)' };
   const layout = {

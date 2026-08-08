@@ -177,11 +177,13 @@ Build-Step, keine neue Backend-Abhängigkeit):
 - **Achsen** (dynamisch, kein Plotly-Autoscale): X = Temperatur, Y = relative
   Feuchte, Z = Güte 0–100. Der sichtbare Bereich wird bei jedem Redraw eng um
   die tatsächlich geplotteten Werte gelegt (`paddedRange()`: Min/Max aller
-  aktuellen Punkte + ca. 15 % Puffer, mit Mindestbreite gegen einen entarteten
-  Bereich bei sehr ähnlichen Werten) statt einer festen, oft halbleeren
+  aktuellen Punkte + Puffer, mit Mindestbreite gegen einen entarteten Bereich
+  bei sehr ähnlichen Werten) statt einer festen, oft halbleeren
   10–35 °C-/0–100-Skala – Ziel ist ein fokussierter statt ausufernder Plot.
-  Nebeneffekt: der Ausschnitt verschiebt sich leicht zwischen Polls, wenn sich
-  die Werte ändern (kein visuell 100 % stabiler Fixpunkt mehr).
+  Die Güte-Achse (Z) ist dabei am engsten parametrisiert (10 % statt 15 %
+  Puffer, kleinere Mindestbreite), da sie am ehesten zu unnötig viel Leerraum
+  neigte. Nebeneffekt: der Ausschnitt verschiebt sich leicht zwischen Polls,
+  wenn sich die Werte ändern (kein visuell 100 % stabiler Fixpunkt mehr).
 - **Räume mit Fenster**: Linie durch alle 11 Blend-Punkte (0→100 % Außenluft),
   Farbe pro Segment interpoliert zwischen Grau (keine Änderung), Grün
   (Verbesserung ggü. dem aktuellen Zustand) und Rot (Verschlechterung) –
@@ -192,9 +194,13 @@ Build-Step, keine neue Backend-Abhängigkeit):
   Legenden-Symbol), Pfeilspitze (`cone`-Trace) am 100%-Endpunkt in derselben
   kräftigen Farbe, kleiner Diamant-Marker am Idealpunkt
   `(ideal_temp, ideal_humidity_rel, 100)`.
-- **Außenreferenz**: einzelner blauer Quadrat-Marker bei `(temp, humidity_rel, 0)`
-  mit dem aktuellen Wert aus `GET /api/outdoor` (siehe unten); Hover zeigt
-  Bereichsname und ob gerade der Wetter-Fallback statt echter Sensoren aktiv ist.
+- **Außenreferenz** taucht in der 3D-Ansicht bewusst nicht auf: Güte ist immer
+  relativ zum Idealpunkt eines Raums definiert, Außenluft hat keinen eigenen
+  Idealpunkt und damit keinen sinnvollen Güte-Wert – ein Marker dafür brauchte
+  zwangsläufig einen künstlichen Platzhalter auf der Güte-Achse (z.B. `z=0`),
+  was beim ersten Anlauf mehr verwirrt als geholfen hat. Der aktuelle Außenwert
+  bleibt über `GET /api/outdoor` und die Statuszeile in der Tabellenansicht
+  sichtbar.
 - **Bad** (kein Fenster, kein Güte-Score) taucht in der 3D-Ansicht bewusst
   nicht auf (weiterhin nur in der Tabelle sichtbar) – Schimmelrisiko-Bewertung
   und Güte-Score sind fachlich getrennte Dinge, ein gemeinsamer 3D-Plot dafür
@@ -214,9 +220,6 @@ Build-Step, keine neue Backend-Abhängigkeit):
   Hintergrund weiter.
 
 **Bekannte Annahmen/offene Punkte** (nicht aus dem Auftrag eindeutig ableitbar):
-- Der Außen-Marker wird auf `z=0` (Boden der Güte-Achse) platziert, da die
-  Außenluft selbst keinen Güte-Wert hat (Güte ist immer relativ zum
-  Idealpunkt eines Raums) und keine andere Position vorgegeben war.
 - Cone-Größe (`sizeref`) und Rotationsgeschwindigkeit/-dauer sind plausible
   Startwerte – da in dieser Umgebung kein Browser zum visuellen Testen zur
   Verfügung stand, ggf. nach dem ersten Blick auf die echte Seite anpassen.
