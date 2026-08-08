@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.2.0"
+version: "0.2.1"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
@@ -53,8 +53,8 @@ schema:
 
   rooms:
     - name: "str"
-      temp_entity: "entity(sensor|temperature)"
-      humidity_entity: "entity(sensor|humidity)"
+      temp_entity: "str"
+      humidity_entity: "str"
       ideal_temp: "float"
       ideal_humidity_rel: "float(0,100)"
       weight_temp: "float(0,)"
@@ -62,19 +62,19 @@ schema:
       binary_sensor_suffix: "str?"
   no_window_rooms:
     - name: "str"
-      temp_entity: "entity(sensor|temperature)"
-      humidity_entity: "entity(sensor|humidity)"
+      temp_entity: "str"
+      humidity_entity: "str"
       mold_risk_threshold: "float(0,)?"
       mold_risk_hysteresis: "float(0,)?"
       binary_sensor_suffix: "str?"
   mold_risk_threshold: "float(0,)"
   mold_risk_hysteresis: "float(0,)"
 
-  outdoor_weather_entity: "entity(weather)"
+  outdoor_weather_entity: "str"
   blend_steps: "int(1,50)"
   delta_guete_threshold: "float"
   stability_minutes: "int(1,120)"
   poll_interval_seconds: "int(10,3600)"
   notify_targets:
     - service: "str"
-      person_entity: "entity(person)"
+      person_entity: "str"
