@@ -1,10 +1,37 @@
 configuration:
+  auto_discover_rooms:
+    name: "Auto-discover rooms"
+    description: "Automatically find rooms and their temperature/humidity sensors from Home Assistant's Area registry. Manual entries in 'rooms' / 'no_window_rooms' with a matching name always take precedence."
+  area_discovery_interval_minutes:
+    name: "Area discovery interval (minutes)"
+    description: "How often the Area/Device/Entity registry is re-queried via the WebSocket API to pick up newly added rooms or sensors."
+  no_window_areas:
+    name: "No-window areas"
+    description: "Names of Home Assistant Areas (e.g. 'Bad') that should be treated as mold-risk-only rooms instead of participating in the ventilation Güte score."
+  default_ideal_temp:
+    name: "Default ideal temperature"
+    description: "Ideal temperature (°C) applied to auto-discovered rooms that don't have a manual override."
+  default_ideal_humidity_rel:
+    name: "Default ideal relative humidity"
+    description: "Ideal relative humidity (%) applied to auto-discovered rooms that don't have a manual override."
+  default_weight_temp:
+    name: "Default temperature weight"
+    description: "Weight of the temperature term in the Güte score for auto-discovered rooms."
+  default_weight_humidity:
+    name: "Default humidity weight"
+    description: "Weight of the humidity term in the Güte score for auto-discovered rooms."
   rooms:
-    name: "Rooms"
-    description: "Rooms with a window that participate in the ventilation quality score."
-  bad:
-    name: "Bathroom (no window)"
-    description: "Handled separately: mold-risk assessment based on absolute humidity only, no ventilation recommendation."
+    name: "Rooms (manual)"
+    description: "Rooms with a window that participate in the ventilation quality score. A manual entry with a name matching a Home Assistant Area overrides the auto-discovered sensors/defaults for that room."
+  no_window_rooms:
+    name: "No-window rooms (manual)"
+    description: "Rooms without a window (e.g. bathroom), handled separately: mold-risk assessment based on absolute humidity only, no ventilation recommendation."
+  mold_risk_threshold:
+    name: "Mold risk threshold"
+    description: "Default absolute humidity (g/m³) above which a no-window room is flagged as mold risk. Can be overridden per room."
+  mold_risk_hysteresis:
+    name: "Mold risk hysteresis"
+    description: "Default gap (g/m³) below the threshold required before the mold-risk flag clears again. Can be overridden per room."
   outdoor_weather_entity:
     name: "Outdoor weather entity"
     description: "Weather entity providing current outdoor temperature/humidity attributes (e.g. weather.forecast_home)."

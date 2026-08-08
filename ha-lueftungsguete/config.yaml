@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.1.0"
+version: "0.2.0"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
@@ -16,33 +16,20 @@ panel_icon: mdi:air-filter
 panel_title: "Lüftungsgüte"
 
 options:
-  rooms:
-    - name: "Wohnzimmer"
-      temp_entity: "sensor.temphum_wohnzimmer_temperatur"
-      humidity_entity: "sensor.temphum_wohnzimmer_luftfeuchtigkeit"
-      ideal_temp: 21.0
-      ideal_humidity_rel: 45.0
-      weight_temp: 1.0
-      weight_humidity: 1.0
-    - name: "Schlafzimmer"
-      temp_entity: "sensor.temphum_schlafzimmer_temperatur"
-      humidity_entity: "sensor.temphum_schlafzimmer_luftfeuchtigkeit"
-      ideal_temp: 18.0
-      ideal_humidity_rel: 50.0
-      weight_temp: 1.0
-      weight_humidity: 1.0
-    - name: "Büro"
-      temp_entity: "sensor.temphum_buro_temperatur"
-      humidity_entity: "sensor.temphum_buro_luftfeuchtigkeit"
-      ideal_temp: 21.0
-      ideal_humidity_rel: 45.0
-      weight_temp: 1.0
-      weight_humidity: 1.0
-  bad:
-    temp_entity: "sensor.temphum_bad_temperatur"
-    humidity_entity: "sensor.temphum_bad_luftfeuchtigkeit"
-    mold_risk_threshold: 12.0
-    mold_risk_hysteresis: 1.5
+  auto_discover_rooms: true
+  area_discovery_interval_minutes: 30
+  no_window_areas:
+    - "Bad"
+  default_ideal_temp: 21.0
+  default_ideal_humidity_rel: 45.0
+  default_weight_temp: 1.0
+  default_weight_humidity: 1.0
+
+  rooms: []
+  no_window_rooms: []
+  mold_risk_threshold: 12.0
+  mold_risk_hysteresis: 1.5
+
   outdoor_weather_entity: "weather.forecast_home"
   blend_steps: 10
   delta_guete_threshold: 0.5
@@ -55,6 +42,15 @@ options:
       person_entity: "person.lina_kollmann"
 
 schema:
+  auto_discover_rooms: "bool"
+  area_discovery_interval_minutes: "int(5,1440)"
+  no_window_areas:
+    - "str"
+  default_ideal_temp: "float"
+  default_ideal_humidity_rel: "float(0,100)"
+  default_weight_temp: "float(0,)"
+  default_weight_humidity: "float(0,)"
+
   rooms:
     - name: "str"
       temp_entity: "entity(sensor|temperature)"
@@ -64,11 +60,16 @@ schema:
       weight_temp: "float(0,)"
       weight_humidity: "float(0,)"
       binary_sensor_suffix: "str?"
-  bad:
-    temp_entity: "entity(sensor|temperature)"
-    humidity_entity: "entity(sensor|humidity)"
-    mold_risk_threshold: "float(0,)"
-    mold_risk_hysteresis: "float(0,)"
+  no_window_rooms:
+    - name: "str"
+      temp_entity: "entity(sensor|temperature)"
+      humidity_entity: "entity(sensor|humidity)"
+      mold_risk_threshold: "float(0,)?"
+      mold_risk_hysteresis: "float(0,)?"
+      binary_sensor_suffix: "str?"
+  mold_risk_threshold: "float(0,)"
+  mold_risk_hysteresis: "float(0,)"
+
   outdoor_weather_entity: "entity(weather)"
   blend_steps: "int(1,50)"
   delta_guete_threshold: "float"

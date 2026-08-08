@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from config import AddonOptions, RoomConfig, load_options
+from config import AddonOptions, NoWindowRoomConfig, RoomConfig, load_options
+from discovery import DiscoveredRoom, discover_rooms
 from ha_client import HAClient
 from persistence import Persistence
 from scoring import absolute_humidity_gm3, blend_curve
@@ -45,7 +46,10 @@ class Controller:
         self.persistence = Persistence()
         self.lock = asyncio.Lock()
         self.latest_rooms: dict[str, dict[str, Any]] = {}
-        self.latest_bad: dict[str, Any] = {}
+        self.latest_no_window_rooms: dict[str, dict[str, Any]] = {}
+        self._room_configs: dict[str, RoomConfig] = {}
+        self._discovered: dict[str, DiscoveredRoom] = {}
+        self._last_discovery: datetime | None = None
 
     async def aclose(self) -> None:
         await self.ha.aclose()
@@ -68,18 +72,82 @@ class Controller:
             if (p := states.get(target.person_entity)) is not None and p.get("state") == "home"
         }
 
+        if self.options.auto_discover_rooms:
+            await self._maybe_refresh_discovery(states)
+
+        effective_rooms, effective_no_window = self._build_effective_rooms()
+
         rooms_result: dict[str, Any] = {}
-        for room in self.options.rooms:
+        room_configs: dict[str, RoomConfig] = {}
+        for room in effective_rooms:
+            room_configs[room.slug] = room
             result = await self._process_room(room, states, temp_out, hum_out, abs_out, present_persons)
             if result is not None:
                 rooms_result[room.slug] = result
 
-        bad_result = await self._process_bad(states)
+        no_window_result: dict[str, Any] = {}
+        for room in effective_no_window:
+            result = await self._process_no_window_room(room, states)
+            if result is not None:
+                no_window_result[room.slug] = result
 
         async with self.lock:
             self.latest_rooms = rooms_result
-            if bad_result is not None:
-                self.latest_bad = bad_result
+            self.latest_no_window_rooms = no_window_result
+            self._room_configs = room_configs
+
+    async def _maybe_refresh_discovery(self, states: dict[str, dict]) -> None:
+        now = datetime.now(timezone.utc)
+        interval = timedelta(minutes=self.options.area_discovery_interval_minutes)
+        if self._last_discovery is not None and now - self._last_discovery < interval:
+            return
+        try:
+            areas, devices, entities = await self.ha.get_registries()
+        except Exception:
+            logger.exception("Area-Discovery fehlgeschlagen, verwende zuletzt bekannten Stand")
+            return
+        self._discovered = discover_rooms(areas, devices, entities, states)
+        self._last_discovery = now
+        logger.info(
+            "Area-Discovery: %d Bereich(e) mit Temperatur+Feuchte-Sensorpaar gefunden (%s)",
+            len(self._discovered), ", ".join(sorted(self._discovered)) or "keine",
+        )
+
+    def _build_effective_rooms(self) -> tuple[list[RoomConfig], list[NoWindowRoomConfig]]:
+        no_window_area_names = {a.strip().lower() for a in self.options.no_window_areas}
+        manual_room_names = {r.name.strip().lower() for r in self.options.rooms}
+        manual_no_window_names = {r.name.strip().lower() for r in self.options.no_window_rooms}
+
+        rooms = list(self.options.rooms)
+        no_window_rooms = list(self.options.no_window_rooms)
+
+        if self.options.auto_discover_rooms:
+            for name, discovered in self._discovered.items():
+                key = name.strip().lower()
+                if key in manual_room_names or key in manual_no_window_names:
+                    continue  # manuelle Angabe hat immer Vorrang vor Auto-Discovery
+                if key in no_window_area_names:
+                    no_window_rooms.append(
+                        NoWindowRoomConfig(
+                            name=discovered.name,
+                            temp_entity=discovered.temp_entity,
+                            humidity_entity=discovered.humidity_entity,
+                        )
+                    )
+                else:
+                    rooms.append(
+                        RoomConfig(
+                            name=discovered.name,
+                            temp_entity=discovered.temp_entity,
+                            humidity_entity=discovered.humidity_entity,
+                            ideal_temp=self.options.default_ideal_temp,
+                            ideal_humidity_rel=self.options.default_ideal_humidity_rel,
+                            weight_temp=self.options.default_weight_temp,
+                            weight_humidity=self.options.default_weight_humidity,
+                        )
+                    )
+
+        return rooms, no_window_rooms
 
     async def _process_room(
         self,
@@ -184,46 +252,52 @@ class Controller:
         rising_edge = recommend and not was_on
         return recommend, rising_edge, positive_since
 
-    async def _process_bad(self, states: dict[str, dict]) -> dict[str, Any] | None:
-        bad = self.options.bad
-        temp_bad = _parse_float(states.get(bad.temp_entity))
-        hum_bad = _parse_float(states.get(bad.humidity_entity))
-        if temp_bad is None or hum_bad is None:
-            logger.warning("Bad: Sensordaten nicht verfügbar, überspringe")
+    async def _process_no_window_room(self, room: NoWindowRoomConfig, states: dict[str, dict]) -> dict[str, Any] | None:
+        temp = _parse_float(states.get(room.temp_entity))
+        hum = _parse_float(states.get(room.humidity_entity))
+        if temp is None or hum is None:
+            logger.warning("%s: Sensordaten nicht verfügbar, überspringe", room.name)
             return None
 
-        abs_bad = absolute_humidity_gm3(temp_bad, hum_bad)
-        state = self.persistence.get_bad_state()
+        abs_humidity = absolute_humidity_gm3(temp, hum)
+        threshold = room.mold_risk_threshold if room.mold_risk_threshold is not None else self.options.mold_risk_threshold
+        hysteresis = (
+            room.mold_risk_hysteresis if room.mold_risk_hysteresis is not None else self.options.mold_risk_hysteresis
+        )
+
+        state = self.persistence.get_no_window_state(room.slug)
         risk_on = bool(state.get("risk_on", False))
 
-        if not risk_on and abs_bad >= bad.mold_risk_threshold:
+        if not risk_on and abs_humidity >= threshold:
             risk_on = True
-        elif risk_on and abs_bad <= bad.mold_risk_threshold - bad.mold_risk_hysteresis:
+        elif risk_on and abs_humidity <= threshold - hysteresis:
             risk_on = False
 
-        self.persistence.set_bad_state({"risk_on": risk_on})
+        self.persistence.set_no_window_state(room.slug, {"risk_on": risk_on})
 
         await self.ha.set_state(
-            "binary_sensor.schimmelrisiko_bad",
+            room.binary_sensor_entity_id,
             "on" if risk_on else "off",
             {
-                "friendly_name": "Schimmelrisiko Bad",
+                "friendly_name": f"Schimmelrisiko {room.name}",
                 "device_class": "problem",
-                "abs_humidity": round(abs_bad, 3),
-                "threshold": bad.mold_risk_threshold,
+                "abs_humidity": round(abs_humidity, 3),
+                "threshold": threshold,
             },
         )
 
         return {
-            "temp_entity": bad.temp_entity,
-            "humidity_entity": bad.humidity_entity,
-            "temp": round(temp_bad, 2),
-            "humidity_rel": round(hum_bad, 2),
-            "abs_humidity": round(abs_bad, 3),
-            "mold_risk_threshold": bad.mold_risk_threshold,
-            "mold_risk_hysteresis": bad.mold_risk_hysteresis,
+            "name": room.name,
+            "slug": room.slug,
+            "temp_entity": room.temp_entity,
+            "humidity_entity": room.humidity_entity,
+            "temp": round(temp, 2),
+            "humidity_rel": round(hum, 2),
+            "abs_humidity": round(abs_humidity, 3),
+            "mold_risk_threshold": threshold,
+            "mold_risk_hysteresis": hysteresis,
             "schimmelrisiko": risk_on,
-            "binary_sensor": "binary_sensor.schimmelrisiko_bad",
+            "binary_sensor": room.binary_sensor_entity_id,
             "updated_at": _now_iso(),
         }
 
@@ -239,7 +313,7 @@ class Controller:
 
     def find_room(self, room_key: str) -> RoomConfig | None:
         key = room_key.strip().lower()
-        for room in self.options.rooms:
+        for room in self._room_configs.values():
             if room.slug == key or room.name.lower() == key:
                 return room
         return None
@@ -288,11 +362,11 @@ async def api_rooms() -> JSONResponse:
         return JSONResponse(list(controller.latest_rooms.values()))
 
 
-@app.get("/api/bad")
-async def api_bad() -> JSONResponse:
+@app.get("/api/no-window-rooms")
+async def api_no_window_rooms() -> JSONResponse:
     controller = _controller(app)
     async with controller.lock:
-        return JSONResponse(controller.latest_bad)
+        return JSONResponse(list(controller.latest_no_window_rooms.values()))
 
 
 @app.get("/api/rooms/{room_key}/blend-curve")
@@ -348,14 +422,14 @@ _INDEX_HTML = """<!doctype html>
 </head>
 <body>
 <h1>Lüftungsgüte</h1>
-<p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
-<h2>Räume</h2>
+<p class="muted">Aktualisiert sich alle paar Sekunden. Voller Datenzugriff über <code>/api/rooms</code>, <code>/api/no-window-rooms</code> und <code>/api/rooms/{room}/blend-curve</code>.</p>
+<h2>Räume (mit Fenster)</h2>
 <table id="rooms"><thead><tr>
   <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte</th><th>ΔGüte</th><th>Lüften?</th>
 </tr></thead><tbody></tbody></table>
-<h2>Bad</h2>
-<table id="bad"><thead><tr>
-  <th>T</th><th>F rel</th><th>F abs</th><th>Schimmelrisiko</th>
+<h2>Räume ohne Fenster (Schimmelrisiko)</h2>
+<table id="no-window"><thead><tr>
+  <th>Raum</th><th>T</th><th>F rel</th><th>F abs</th><th>Schimmelrisiko</th>
 </tr></thead><tbody></tbody></table>
 <script>
 async function refresh() {
@@ -371,16 +445,15 @@ async function refresh() {
       <td><span class="badge ${r.luften_empfohlen ? 'on' : 'off'}">${r.luften_empfohlen ? 'ja' : 'nein'}</span></td>
     </tr>`).join('');
 
-    const bad = await (await fetch('api/bad')).json();
-    const badBody = document.querySelector('#bad tbody');
-    if (bad && bad.temp !== undefined) {
-      badBody.innerHTML = `<tr>
-        <td>${bad.temp} °C</td>
-        <td>${bad.humidity_rel} %</td>
-        <td>${bad.abs_humidity} g/m³</td>
-        <td><span class="badge ${bad.schimmelrisiko ? 'on' : 'off'}">${bad.schimmelrisiko ? 'Risiko' : 'ok'}</span></td>
-      </tr>`;
-    }
+    const noWindow = await (await fetch('api/no-window-rooms')).json();
+    const noWindowBody = document.querySelector('#no-window tbody');
+    noWindowBody.innerHTML = noWindow.map(r => `<tr>
+      <td>${r.name}</td>
+      <td>${r.temp} °C</td>
+      <td>${r.humidity_rel} %</td>
+      <td>${r.abs_humidity} g/m³</td>
+      <td><span class="badge ${r.schimmelrisiko ? 'on' : 'off'}">${r.schimmelrisiko ? 'Risiko' : 'ok'}</span></td>
+    </tr>`).join('');
   } catch (e) {
     console.error(e);
   }

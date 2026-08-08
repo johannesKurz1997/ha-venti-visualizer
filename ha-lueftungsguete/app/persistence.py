@@ -9,7 +9,7 @@ from typing import Any
 STATE_PATH = Path(os.environ.get("ADDON_STATE_PATH", "/data/state.json"))
 MAX_HISTORY_ENTRIES = 500
 
-_DEFAULT_STATE: dict[str, Any] = {"rooms": {}, "bad": {}, "history": []}
+_DEFAULT_STATE: dict[str, Any] = {"rooms": {}, "no_window_rooms": {}, "history": []}
 
 
 class Persistence:
@@ -52,13 +52,13 @@ class Persistence:
             self._state["rooms"][room_slug] = room_state
             self._save()
 
-    def get_bad_state(self) -> dict[str, Any]:
+    def get_no_window_state(self, room_slug: str) -> dict[str, Any]:
         with self._lock:
-            return dict(self._state["bad"])
+            return dict(self._state["no_window_rooms"].get(room_slug, {}))
 
-    def set_bad_state(self, bad_state: dict[str, Any]) -> None:
+    def set_no_window_state(self, room_slug: str, room_state: dict[str, Any]) -> None:
         with self._lock:
-            self._state["bad"] = bad_state
+            self._state["no_window_rooms"][room_slug] = room_state
             self._save()
 
     def append_history(self, entry: dict[str, Any]) -> None:

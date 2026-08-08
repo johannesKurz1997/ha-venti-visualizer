@@ -36,11 +36,23 @@ class RoomConfig(BaseModel):
         return f"binary_sensor.luften_{self.slug}"
 
 
-class BadConfig(BaseModel):
+class NoWindowRoomConfig(BaseModel):
+    """Raum ohne Fenster (z.B. Bad): nur Schimmelrisiko, keine Güte-/Lüftungslogik."""
+
+    name: str
     temp_entity: str
     humidity_entity: str
-    mold_risk_threshold: float = 12.0
-    mold_risk_hysteresis: float = 1.5
+    mold_risk_threshold: float | None = None
+    mold_risk_hysteresis: float | None = None
+    binary_sensor_suffix: str | None = None
+
+    @property
+    def slug(self) -> str:
+        return self.binary_sensor_suffix or slugify(self.name)
+
+    @property
+    def binary_sensor_entity_id(self) -> str:
+        return f"binary_sensor.schimmelrisiko_{self.slug}"
 
 
 class NotifyTarget(BaseModel):
@@ -49,8 +61,19 @@ class NotifyTarget(BaseModel):
 
 
 class AddonOptions(BaseModel):
+    auto_discover_rooms: bool = True
+    area_discovery_interval_minutes: int = 30
+    no_window_areas: list[str] = Field(default_factory=lambda: ["Bad"])
+    default_ideal_temp: float = 21.0
+    default_ideal_humidity_rel: float = 45.0
+    default_weight_temp: float = 1.0
+    default_weight_humidity: float = 1.0
+
     rooms: list[RoomConfig] = Field(default_factory=list)
-    bad: BadConfig
+    no_window_rooms: list[NoWindowRoomConfig] = Field(default_factory=list)
+    mold_risk_threshold: float = 12.0
+    mold_risk_hysteresis: float = 1.5
+
     outdoor_weather_entity: str
     blend_steps: int = 10
     delta_guete_threshold: float = 0.5
