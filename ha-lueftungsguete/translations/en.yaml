@@ -8,6 +8,9 @@ configuration:
   no_window_areas:
     name: "No-window areas"
     description: "Names of Home Assistant Areas (e.g. 'Bad') that should be treated as mold-risk-only rooms instead of participating in the ventilation Güte score."
+  outdoor_area_name:
+    name: "Outdoor reference area"
+    description: "Name of the Home Assistant Area (e.g. 'Außen') whose temperature/humidity sensors serve as the outdoor reference for all rooms. This area is never scored as a room itself and takes precedence over 'Outdoor weather entity' when its sensors are available."
   default_ideal_temp:
     name: "Default ideal temperature"
     description: "Ideal temperature (°C) applied to auto-discovered rooms that don't have a manual override."
@@ -33,8 +36,8 @@ configuration:
     name: "Mold risk hysteresis"
     description: "Default gap (g/m³) below the threshold required before the mold-risk flag clears again. Can be overridden per room."
   outdoor_weather_entity:
-    name: "Outdoor weather entity"
-    description: "Weather entity providing current outdoor temperature/humidity attributes (e.g. weather.forecast_home)."
+    name: "Outdoor weather entity (fallback)"
+    description: "Weather entity providing current outdoor temperature/humidity attributes (e.g. weather.forecast_home). Only used as a fallback while the 'Outdoor reference area' has no working sensors."
   blend_steps:
     name: "Blend step size (%)"
     description: "Step size for the indoor/outdoor air blend simulation (0-100%). Must divide 100 evenly."

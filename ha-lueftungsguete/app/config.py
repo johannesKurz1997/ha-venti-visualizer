@@ -64,6 +64,7 @@ class AddonOptions(BaseModel):
     auto_discover_rooms: bool = True
     area_discovery_interval_minutes: int = 30
     no_window_areas: list[str] = Field(default_factory=lambda: ["Bad"])
+    outdoor_area_name: str = "Außen"
     default_ideal_temp: float = 21.0
     default_ideal_humidity_rel: float = 45.0
     default_weight_temp: float = 1.0
@@ -74,7 +75,7 @@ class AddonOptions(BaseModel):
     mold_risk_threshold: float = 12.0
     mold_risk_hysteresis: float = 1.5
 
-    outdoor_weather_entity: str
+    outdoor_weather_entity: str | None = None
     blend_steps: int = 10
     delta_guete_threshold: float = 0.5
     stability_minutes: int = 10

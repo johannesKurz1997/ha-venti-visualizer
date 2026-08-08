@@ -57,12 +57,14 @@ class Controller:
     async def poll_once(self) -> None:
         states = await self.ha.get_all_states()
 
-        weather_state = states.get(self.options.outdoor_weather_entity)
-        temp_out, hum_out = _outdoor_from_weather(weather_state)
+        if self.options.auto_discover_rooms:
+            await self._maybe_refresh_discovery(states)
+
+        effective_rooms, effective_no_window, outdoor_entities = self._build_effective_rooms()
+
+        temp_out, hum_out = self._resolve_outdoor(states, outdoor_entities)
         if temp_out is None or hum_out is None:
-            logger.warning(
-                "Außenwerte nicht verfügbar (%s) - überspringe Zyklus", self.options.outdoor_weather_entity
-            )
+            logger.warning("Außenwerte nicht verfügbar - überspringe Zyklus")
             return
         abs_out = absolute_humidity_gm3(temp_out, hum_out)
 
@@ -71,11 +73,6 @@ class Controller:
             for target in self.options.notify_targets
             if (p := states.get(target.person_entity)) is not None and p.get("state") == "home"
         }
-
-        if self.options.auto_discover_rooms:
-            await self._maybe_refresh_discovery(states)
-
-        effective_rooms, effective_no_window = self._build_effective_rooms()
 
         rooms_result: dict[str, Any] = {}
         room_configs: dict[str, RoomConfig] = {}
@@ -113,17 +110,33 @@ class Controller:
             len(self._discovered), ", ".join(sorted(self._discovered)) or "keine",
         )
 
-    def _build_effective_rooms(self) -> tuple[list[RoomConfig], list[NoWindowRoomConfig]]:
+    def _build_effective_rooms(
+        self,
+    ) -> tuple[list[RoomConfig], list[NoWindowRoomConfig], tuple[str, str] | None]:
+        """Baut die effektive Raumliste; der `outdoor_area_name`-Raum (Default "Außen")
+        wird dabei nie als eigener Lüftungs-/Schimmelrisiko-Raum geführt, sondern als
+        Außenreferenz (temp_entity, humidity_entity) zurückgegeben (siehe _resolve_outdoor).
+        """
+        outdoor_name = self.options.outdoor_area_name.strip().lower()
         no_window_area_names = {a.strip().lower() for a in self.options.no_window_areas}
         manual_room_names = {r.name.strip().lower() for r in self.options.rooms}
         manual_no_window_names = {r.name.strip().lower() for r in self.options.no_window_rooms}
 
-        rooms = list(self.options.rooms)
-        no_window_rooms = list(self.options.no_window_rooms)
+        rooms = [r for r in self.options.rooms if r.name.strip().lower() != outdoor_name]
+        no_window_rooms = [r for r in self.options.no_window_rooms if r.name.strip().lower() != outdoor_name]
+
+        outdoor_entities: tuple[str, str] | None = None
+        for r in self.options.rooms:
+            if r.name.strip().lower() == outdoor_name:
+                outdoor_entities = (r.temp_entity, r.humidity_entity)
 
         if self.options.auto_discover_rooms:
             for name, discovered in self._discovered.items():
                 key = name.strip().lower()
+                if key == outdoor_name:
+                    if outdoor_entities is None:  # manuelle Angabe hat Vorrang
+                        outdoor_entities = (discovered.temp_entity, discovered.humidity_entity)
+                    continue
                 if key in manual_room_names or key in manual_no_window_names:
                     continue  # manuelle Angabe hat immer Vorrang vor Auto-Discovery
                 if key in no_window_area_names:
@@ -147,7 +160,29 @@ class Controller:
                         )
                     )
 
-        return rooms, no_window_rooms
+        return rooms, no_window_rooms, outdoor_entities
+
+    def _resolve_outdoor(
+        self, states: dict[str, dict], outdoor_entities: tuple[str, str] | None
+    ) -> tuple[float | None, float | None]:
+        """Außenwerte bevorzugt vom `outdoor_area_name`-Raum (echte Sensoren), sonst
+        Fallback auf `outdoor_weather_entity` (Wetter-Vorhersage-Attribute)."""
+        if outdoor_entities is not None:
+            temp_entity, humidity_entity = outdoor_entities
+            temp = _parse_float(states.get(temp_entity))
+            hum = _parse_float(states.get(humidity_entity))
+            if temp is not None and hum is not None:
+                return temp, hum
+            logger.warning(
+                "Außenreferenz-Raum '%s' liefert keine Sensordaten, "
+                "verwende outdoor_weather_entity als Fallback",
+                self.options.outdoor_area_name,
+            )
+
+        if self.options.outdoor_weather_entity:
+            return _outdoor_from_weather(states.get(self.options.outdoor_weather_entity))
+
+        return None, None
 
     async def _process_room(
         self,

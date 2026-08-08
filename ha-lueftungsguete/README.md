@@ -22,6 +22,11 @@ Registry ab, welche **Bereiche** ("Areas") in deiner Instanz existieren, und
 sucht darin jeweils einen Sensor mit `device_class: temperature` und einen
 mit `device_class: humidity`:
 
+- Bereich entspricht `outdoor_area_name` (Default: `"Außen"`) → wird **nicht**
+  als eigener Raum geführt (kein Güte-Score, keine Lüftungsempfehlung, kein
+  `binary_sensor.*`), sondern liefert die Außentemperatur/-feuchte, die für
+  **alle** anderen Räume als Referenz in die Blend-Curve einfließt (siehe
+  [Außenreferenz](#außenreferenz)).
 - Bereich hat beide Sensoren gefunden und ist **nicht** in `no_window_areas`
   gelistet → wird automatisch als Lüftungs-Raum behandelt, mit
   `default_ideal_temp` / `default_ideal_humidity_rel` / `default_weight_*`
@@ -52,25 +57,46 @@ von `temperature` bzw. `humidity` haben – beides ist bei den meisten
 Integrationen (Zigbee2MQTT, ESPHome, Bluetooth-Thermometer, ...) automatisch
 der Fall.
 
+## Außenreferenz
+
+Der Bereich `outdoor_area_name` (Default: `"Außen"`) ist **kein eigener
+Lüftungs-/Schimmelrisiko-Raum**, sondern die Referenz für "draußen" in der
+Blend-Curve-Simulation aller anderen Räume:
+
+1. Existiert (auto-erkannt oder manuell per `rooms`-Eintrag mit passendem
+   `name`) ein Bereich `outdoor_area_name` mit Temperatur+Feuchte-Sensoren
+   und liefern diese gerade einen Wert → dieser Wert wird als Außentemperatur/
+   -feuchte verwendet.
+2. Sonst, falls `outdoor_weather_entity` gesetzt ist → Fallback auf dessen
+   `temperature`/`humidity`-Attribute (Wetter-Vorhersage statt echtem
+   Außensensor).
+3. Sind weder Sensoren noch Wetter-Entity verfügbar → Poll-Zyklus wird
+   übersprungen (mit Warnung im Log).
+
+Ein manueller `rooms`-Eintrag mit `name: "Außen"` wird dabei ebenfalls **nicht**
+zu einem Lüftungs-Raum, sondern nur als expliziter Außensensor-Override
+behandelt (z.B. um einen von mehreren Kandidaten zu erzwingen oder Auto-
+Discovery für diesen einen Bereich zu umgehen).
+
 ## Konfiguration im Dashboard
 
 Alle Entity-Felder (`temp_entity`, `humidity_entity`, `outdoor_weather_entity`,
-`person_entity`) sind als `entity(...)`-Schema-Typ definiert. Im UI-Modus des
-Konfigurations-Tabs zeigt Home Assistant dafür automatisch ein
-Entity-Picker-Dropdown, vorgefiltert nach Domain (z.B. nur `weather.*`) bzw.
-Domain + Device-Class (z.B. nur `sensor.*` mit `device_class: temperature`).
-Diese Picker sind vor allem für manuelle Einträge in `rooms`/`no_window_rooms`
-relevant – bei aktiver Auto-Discovery brauchst du sie im Regelfall gar nicht.
+`person_entity`) sind als einfacher `str`-Schema-Typ definiert (der von HA
+Supervisor unterstützte `entity(...)`-Typ existiert nicht – ein früherer
+Versuch damit ließ das Addon komplett aus dem Add-on Store verschwinden).
+Im UI-Modus des Konfigurations-Tabs gibt es dafür entsprechend **kein**
+domain-gefiltertes Entity-Picker-Dropdown, sondern ein Freitextfeld – die
+Entity-ID muss manuell eingetragen werden (z.B. aus Entwicklertools →
+Zustände kopiert). Bei aktiver Auto-Discovery brauchst du das im Regelfall
+ohnehin nicht.
 
 Die `rooms`- und `no_window_rooms`-Listen sind Listen-Schemas – im UI-Modus
 erscheint dafür pro Eintrag ein Karten-Block mit „Hinzufügen"/„Entfernen"-
 Buttons, falls doch ein manueller Override nötig ist.
 
-**Einschränkung:** Der `entity(sensor|temperature)`-Filter (Picker **und**
-Auto-Discovery) zeigt nur Sensoren, die HA tatsächlich mit
-`device_class: temperature` (bzw. `humidity`) kennt. Fehlt einem Sensor diese
-Device-Class, taucht er weder im Dropdown noch in der Auto-Discovery auf –
-dann kurz in den YAML-Modus wechseln und die Entity-ID manuell in einem
+**Einschränkung:** Nur die Auto-Discovery filtert nach `device_class:
+temperature`/`humidity`. Fehlt einem Sensor diese Device-Class, taucht er
+dort nicht auf – die Entity-ID lässt sich dann trotzdem manuell in einem
 `rooms`/`no_window_rooms`-Eintrag setzen (das Addon selbst validiert nur,
 dass es ein String ist, keine Domain/Device-Class-Prüfung).
 
@@ -87,7 +113,7 @@ Alle `poll_interval_seconds` (Default 60s):
 0. Falls `auto_discover_rooms: true`: alle `area_discovery_interval_minutes`
    die HA-Bereichs-Registry über die Core-WebSocket-API abfragen und die
    Raumliste aktualisieren (siehe [Automatische Raumerkennung](#automatische-raumerkennung)).
-1. Liest Temperatur/Feuchte für jeden (manuellen + auto-erkannten) Raum sowie Außentemperatur/-feuchte aus dem konfigurierten `weather.*`-Entity.
+1. Liest Temperatur/Feuchte für jeden (manuellen + auto-erkannten) Raum sowie Außentemperatur/-feuchte vom `outdoor_area_name`-Bereich (Fallback: konfiguriertes `weather.*`-Entity, siehe [Außenreferenz](#außenreferenz)).
 2. Berechnet absolute Feuchte (Magnus-Formel) für Innen- und Außenluft.
 3. Simuliert für jeden Lüftungs-Raum die Mischung Innen-/Außenluft in `blend_steps`-Schritten von 0–100 % und berechnet den Güte-Score an jedem Punkt (siehe unten).
 4. Bildet `ΔGüte = Güte(100%) - Güte(0%)`. Ist `ΔGüte` seit `stability_minutes` Minuten ununterbrochen über `delta_guete_threshold`, wird Lüften empfohlen.
@@ -129,6 +155,7 @@ auto_discover_rooms: true
 area_discovery_interval_minutes: 30
 no_window_areas:
   - "Bad"
+outdoor_area_name: "Außen"       # Bereich = Außenreferenz, kein eigener Raum
 default_ideal_temp: 21.0
 default_ideal_humidity_rel: 45.0
 default_weight_temp: 1.0
@@ -149,7 +176,7 @@ no_window_rooms: []              # normalerweise leer, "Bad" kommt über no_wind
 mold_risk_threshold: 12.0        # g/m³ absolute Feuchte, ab der Schimmelrisiko = an
 mold_risk_hysteresis: 1.5        # g/m³ Abstand, um wieder auf "aus" zu schalten
 
-outdoor_weather_entity: "weather.forecast_home"
+outdoor_weather_entity: "weather.forecast_home"  # Fallback, falls outdoor_area_name keine Sensoren liefert
 blend_steps: 10                  # muss 100 ohne Rest teilen
 delta_guete_threshold: 0.5
 stability_minutes: 10

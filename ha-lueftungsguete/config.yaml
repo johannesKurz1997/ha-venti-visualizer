@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.2.1"
+version: "0.2.2"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
@@ -20,6 +20,7 @@ options:
   area_discovery_interval_minutes: 30
   no_window_areas:
     - "Bad"
+  outdoor_area_name: "Außen"
   default_ideal_temp: 21.0
   default_ideal_humidity_rel: 45.0
   default_weight_temp: 1.0
@@ -46,6 +47,7 @@ schema:
   area_discovery_interval_minutes: "int(5,1440)"
   no_window_areas:
     - "str"
+  outdoor_area_name: "str"
   default_ideal_temp: "float"
   default_ideal_humidity_rel: "float(0,100)"
   default_weight_temp: "float(0,)"
@@ -70,7 +72,7 @@ schema:
   mold_risk_threshold: "float(0,)"
   mold_risk_hysteresis: "float(0,)"
 
-  outdoor_weather_entity: "str"
+  outdoor_weather_entity: "str?"
   blend_steps: "int(1,50)"
   delta_guete_threshold: "float"
   stability_minutes: "int(1,120)"
