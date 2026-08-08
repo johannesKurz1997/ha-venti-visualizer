@@ -18,29 +18,29 @@ panel_title: "Lüftungsgüte"
 options:
   rooms:
     - name: "Wohnzimmer"
-      temp_entity: "sensor.wohnzimmer_temperature"
-      humidity_entity: "sensor.wohnzimmer_humidity"
+      temp_entity: "sensor.temphum_wohnzimmer_temperatur"
+      humidity_entity: "sensor.temphum_wohnzimmer_luftfeuchtigkeit"
       ideal_temp: 21.0
       ideal_humidity_rel: 45.0
       weight_temp: 1.0
       weight_humidity: 1.0
     - name: "Schlafzimmer"
-      temp_entity: "sensor.schlafzimmer_temperature"
-      humidity_entity: "sensor.schlafzimmer_humidity"
+      temp_entity: "sensor.temphum_schlafzimmer_temperatur"
+      humidity_entity: "sensor.temphum_schlafzimmer_luftfeuchtigkeit"
       ideal_temp: 18.0
       ideal_humidity_rel: 50.0
       weight_temp: 1.0
       weight_humidity: 1.0
     - name: "Büro"
-      temp_entity: "sensor.buro_temperature"
-      humidity_entity: "sensor.buro_humidity"
+      temp_entity: "sensor.temphum_buro_temperatur"
+      humidity_entity: "sensor.temphum_buro_luftfeuchtigkeit"
       ideal_temp: 21.0
       ideal_humidity_rel: 45.0
       weight_temp: 1.0
       weight_humidity: 1.0
   bad:
-    temp_entity: "sensor.bad_temperature"
-    humidity_entity: "sensor.bad_humidity"
+    temp_entity: "sensor.temphum_bad_temperatur"
+    humidity_entity: "sensor.temphum_bad_luftfeuchtigkeit"
     mold_risk_threshold: 12.0
     mold_risk_hysteresis: 1.5
   outdoor_weather_entity: "weather.forecast_home"
@@ -57,23 +57,23 @@ options:
 schema:
   rooms:
     - name: "str"
-      temp_entity: "str"
-      humidity_entity: "str"
+      temp_entity: "entity(sensor|temperature)"
+      humidity_entity: "entity(sensor|humidity)"
       ideal_temp: "float"
       ideal_humidity_rel: "float(0,100)"
       weight_temp: "float(0,)"
       weight_humidity: "float(0,)"
       binary_sensor_suffix: "str?"
   bad:
-    temp_entity: "str"
-    humidity_entity: "str"
+    temp_entity: "entity(sensor|temperature)"
+    humidity_entity: "entity(sensor|humidity)"
     mold_risk_threshold: "float(0,)"
     mold_risk_hysteresis: "float(0,)"
-  outdoor_weather_entity: "str"
+  outdoor_weather_entity: "entity(weather)"
   blend_steps: "int(1,50)"
   delta_guete_threshold: "float"
   stability_minutes: "int(1,120)"
   poll_interval_seconds: "int(10,3600)"
   notify_targets:
     - service: "str"
-      person_entity: "str"
+      person_entity: "entity(person)"
