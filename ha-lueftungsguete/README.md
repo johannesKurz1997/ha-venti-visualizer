@@ -78,6 +78,34 @@ zu einem Lüftungs-Raum, sondern nur als expliziter Außensensor-Override
 behandelt (z.B. um einen von mehreren Kandidaten zu erzwingen oder Auto-
 Discovery für diesen einen Bereich zu umgehen).
 
+## Idealwerte zur Laufzeit anpassen
+
+Für **jeden** Raum mit Fenster (egal ob auto-erkannt oder manuell konfiguriert)
+lassen sich `ideal_temp`/`ideal_humidity_rel` direkt in der Ingress-Tabelle
+über den ✎-Button ändern, ohne die Addon-Konfiguration zu bearbeiten oder das
+Addon neu zu starten:
+
+- Änderung wird sofort (nicht erst nach `poll_interval_seconds`) über einen
+  Extra-Poll-Zyklus wirksam.
+- Persistiert unter `/data` (wie Stabilitäts-Zustand und Score-Historie) –
+  übersteht Addon-Neustarts, taucht aber **nicht** in den Addon-Optionen auf
+  und wird nirgends in die `config.yaml`/Options-Struktur zurückgeschrieben.
+- Hat Vorrang vor `default_ideal_temp`/`default_ideal_humidity_rel` **und**
+  vor den Werten aus einem manuellen `rooms`-Eintrag, da es der zuletzt
+  gesetzte, explizite Nutzereingriff ist.
+- Der ↺-Button (nur sichtbar, wenn gerade ein Override aktiv ist) setzt den
+  Raum wieder auf den konfigurierten Standard zurück.
+- API direkt nutzbar für z.B. HA-Automationen: `GET/PUT/DELETE
+  /api/rooms/{room}/ideal-override` (`PUT`-Body: `{"ideal_temp": 20.0,
+  "ideal_humidity_rel": 50.0}`, beide Felder optional – nur mitgeschickte
+  Felder werden geändert).
+
+Die Bearbeitung selbst nutzt bewusst einfache `prompt()`-Dialoge statt eines
+Inline-Formulars in der Tabellenzeile: Die Tabelle wird alle 15 s komplett neu
+gerendert, ein offenes Inline-Formular würde dabei mitten in der Eingabe
+verschwinden. Ein `prompt()` ist dagegen ein blockierender Browser-Dialog,
+unabhängig vom Tabellen-Redraw.
+
 ## Konfiguration im Dashboard
 
 Alle Entity-Felder (`temp_entity`, `humidity_entity`, `outdoor_weather_entity`,
@@ -239,8 +267,9 @@ python -m unittest test_scoring.py
 
 - `GET /api/rooms` – aktuelle Werte + Güte aller Lüftungsräume (manuell + auto-erkannt)
 - `GET /api/rooms/{room}/blend-curve` – die Blend-Punkte für einen Raum (Name oder Slug, z.B. `wohnzimmer`)
+- `GET/PUT/DELETE /api/rooms/{room}/ideal-override` – Idealwerte zur Laufzeit lesen/setzen/zurücksetzen (siehe [Idealwerte zur Laufzeit anpassen](#idealwerte-zur-laufzeit-anpassen))
 - `GET /api/no-window-rooms` – aktuelle Werte + Schimmelrisiko aller fensterlosen Räume
-- `GET /api/outdoor` – aktueller Außenwert (`name`, `temp`, `humidity_rel`, `abs_humidity`, `source`: `"area"` oder `"weather"`), auch in der Tabellenansicht und im 3D-Plot sichtbar
+- `GET /api/outdoor` – aktueller Außenwert (`name`, `temp`, `humidity_rel`, `abs_humidity`, `source`: `"area"` oder `"weather"`), in der Tabellenansicht sichtbar
 - `GET /api/config` – aktuell nur `poll_interval_seconds`, für den Refresh-Rhythmus der 3D-Ansicht im Frontend
 - `GET /health` – Health-Check
 

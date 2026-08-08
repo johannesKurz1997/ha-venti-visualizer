@@ -9,7 +9,7 @@ from typing import Any
 STATE_PATH = Path(os.environ.get("ADDON_STATE_PATH", "/data/state.json"))
 MAX_HISTORY_ENTRIES = 500
 
-_DEFAULT_STATE: dict[str, Any] = {"rooms": {}, "no_window_rooms": {}, "history": []}
+_DEFAULT_STATE: dict[str, Any] = {"rooms": {}, "no_window_rooms": {}, "history": [], "ideal_overrides": {}}
 
 
 class Persistence:
@@ -72,3 +72,24 @@ class Persistence:
     def get_history(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._state["history"][-limit:])
+
+    def get_ideal_override(self, room_slug: str) -> dict[str, Any]:
+        """Zur Laufzeit (per API/UI) gesetzte Idealwerte, die die Config-/Auto-Discovery-
+        Defaults überschreiben - überlebt Neustarts, wird aber nie in die Addon-Optionen
+        zurückgeschrieben."""
+        with self._lock:
+            return dict(self._state["ideal_overrides"].get(room_slug, {}))
+
+    def set_ideal_override(self, room_slug: str, updates: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            current = dict(self._state["ideal_overrides"].get(room_slug, {}))
+            current.update({k: v for k, v in updates.items() if v is not None})
+            self._state["ideal_overrides"][room_slug] = current
+            self._save()
+            return dict(current)
+
+    def clear_ideal_override(self, room_slug: str) -> None:
+        with self._lock:
+            if room_slug in self._state["ideal_overrides"]:
+                del self._state["ideal_overrides"][room_slug]
+                self._save()

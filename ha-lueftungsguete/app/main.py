@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from config import AddonOptions, NoWindowRoomConfig, RoomConfig, load_options
 from discovery import DiscoveredRoom, discover_rooms
@@ -169,7 +170,17 @@ class Controller:
                         )
                     )
 
+        rooms = [self._apply_ideal_override(r) for r in rooms]
         return rooms, no_window_rooms, outdoor_entities
+
+    def _apply_ideal_override(self, room: RoomConfig) -> RoomConfig:
+        """Wendet zur Laufzeit per API/UI gesetzte Idealwerte an (siehe /api/rooms/{room}/ideal-override).
+        Gilt für auto-erkannte wie manuell konfigurierte Räume gleichermaßen und hat
+        Vorrang vor beidem, da es ein expliziter, aktueller Nutzereingriff ist."""
+        override = self.persistence.get_ideal_override(room.slug)
+        if not override:
+            return room
+        return room.model_copy(update=override)
 
     def _resolve_outdoor(
         self, states: dict[str, dict], outdoor_entities: tuple[str, str] | None
@@ -271,6 +282,7 @@ class Controller:
             "abs_humidity_in": round(abs_in, 3),
             "ideal_temp": room.ideal_temp,
             "ideal_humidity_rel": room.ideal_humidity_rel,
+            "ideal_override": bool(self.persistence.get_ideal_override(room.slug)),
             "ideal_abs_humidity": round(ideal_abs, 3),
             "sigma_temp": sigma_temp,
             "sigma_humidity_rel": sigma_humidity_rel,
@@ -472,6 +484,54 @@ async def api_blend_curve(room_key: str) -> JSONResponse:
     )
 
 
+class IdealOverrideRequest(BaseModel):
+    ideal_temp: float | None = Field(default=None, ge=-30, le=60)
+    ideal_humidity_rel: float | None = Field(default=None, ge=0, le=100)
+
+
+@app.get("/api/rooms/{room_key}/ideal-override")
+async def api_get_ideal_override(room_key: str) -> JSONResponse:
+    controller = _controller(app)
+    room = controller.find_room(room_key)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Raum: {room_key}")
+    override = controller.persistence.get_ideal_override(room.slug)
+    return JSONResponse(
+        {
+            "ideal_temp": room.ideal_temp,
+            "ideal_humidity_rel": room.ideal_humidity_rel,
+            "has_override": bool(override),
+        }
+    )
+
+
+@app.put("/api/rooms/{room_key}/ideal-override")
+async def api_set_ideal_override(room_key: str, body: IdealOverrideRequest) -> JSONResponse:
+    controller = _controller(app)
+    room = controller.find_room(room_key)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Raum: {room_key}")
+    if body.ideal_temp is None and body.ideal_humidity_rel is None:
+        raise HTTPException(status_code=400, detail="Mindestens ideal_temp oder ideal_humidity_rel angeben")
+
+    controller.persistence.set_ideal_override(
+        room.slug, {"ideal_temp": body.ideal_temp, "ideal_humidity_rel": body.ideal_humidity_rel}
+    )
+    await controller.poll_once()  # sofort wirksam statt erst beim nächsten regulären Poll
+    return JSONResponse({"status": "ok"})
+
+
+@app.delete("/api/rooms/{room_key}/ideal-override")
+async def api_clear_ideal_override(room_key: str) -> JSONResponse:
+    controller = _controller(app)
+    room = controller.find_room(room_key)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Raum: {room_key}")
+    controller.persistence.clear_ideal_override(room.slug)
+    await controller.poll_once()
+    return JSONResponse({"status": "reset"})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
     return _INDEX_HTML
@@ -505,6 +565,11 @@ _INDEX_HTML = """<!doctype html>
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   #plot3d { width: 100%; height: 620px; }
+  .icon-btn {
+    background: none; border: none; color: #9db4ff; cursor: pointer;
+    font-size: 0.9rem; margin-left: 0.35rem; padding: 0 0.15rem;
+  }
+  .icon-btn:hover { color: #fff; }
 </style>
 </head>
 <body>
@@ -520,7 +585,7 @@ _INDEX_HTML = """<!doctype html>
 <p id="outdoor-status" class="muted">Außen: –</p>
 <h2>Räume (mit Fenster)</h2>
 <table id="rooms"><thead><tr>
-  <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Güte (0-100)</th><th>ΔGüte</th><th>Lüften?</th>
+  <th>Raum</th><th>T innen</th><th>F rel innen</th><th>Idealwerte</th><th>Güte (0-100)</th><th>ΔGüte</th><th>Lüften?</th>
 </tr></thead><tbody></tbody></table>
 <h2>Räume ohne Fenster (Schimmelrisiko)</h2>
 <table id="no-window"><thead><tr>
@@ -557,6 +622,11 @@ async function refresh() {
       <td>${r.name}</td>
       <td>${r.temp_in} °C</td>
       <td>${r.humidity_rel_in} %</td>
+      <td>
+        ${r.ideal_temp} °C / ${r.ideal_humidity_rel} %
+        <button class="icon-btn" title="Idealwerte bearbeiten" onclick="editIdealValues('${r.slug}', ${r.ideal_temp}, ${r.ideal_humidity_rel})">&#9998;</button>
+        ${r.ideal_override ? `<button class="icon-btn" title="Auf Standard zurücksetzen" onclick="resetIdealValues('${r.slug}')">&#8634;</button>` : ''}
+      </td>
       <td><span class="badge ${guteClass(r.guete_current)}">${r.guete_current.toFixed(1)}</span></td>
       <td>${r.delta_guete.toFixed(1)}</td>
       <td><span class="badge ${r.luften_empfohlen ? 'on' : 'off'}">${r.luften_empfohlen ? 'ja' : 'nein'}</span></td>
@@ -577,6 +647,45 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 15000);
+
+async function editIdealValues(slug, currentTemp, currentHumidity) {
+  const tempInput = prompt('Ideal-Temperatur (°C):', currentTemp);
+  if (tempInput === null) return;
+  const humInput = prompt('Ideale relative Feuchte (%):', currentHumidity);
+  if (humInput === null) return;
+
+  const ideal_temp = parseFloat(tempInput.replace(',', '.'));
+  const ideal_humidity_rel = parseFloat(humInput.replace(',', '.'));
+  if (Number.isNaN(ideal_temp) || Number.isNaN(ideal_humidity_rel)) {
+    alert('Ungültige Zahl.');
+    return;
+  }
+
+  try {
+    const res = await fetch(`api/rooms/${slug}/ideal-override`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ideal_temp, ideal_humidity_rel }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    refresh();
+  } catch (e) {
+    console.error(e);
+    alert('Speichern fehlgeschlagen.');
+  }
+}
+
+async function resetIdealValues(slug) {
+  if (!confirm('Idealwerte für diesen Raum auf den konfigurierten Standard zurücksetzen?')) return;
+  try {
+    const res = await fetch(`api/rooms/${slug}/ideal-override`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    refresh();
+  } catch (e) {
+    console.error(e);
+    alert('Zurücksetzen fehlgeschlagen.');
+  }
+}
 
 // --- 3D-Ansicht (Plotly) ---
 
