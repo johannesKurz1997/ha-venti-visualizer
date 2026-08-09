@@ -256,11 +256,14 @@ Build-Step, keine neue Backend-Abhängigkeit):
 
 `app/test_scoring.py` deckt die Güte-Formel ab (Idealpunkt = 100, exakte
 Toleranzgrenze = 0, weit jenseits der Toleranz weiterhin 0 statt negativ)
-sowie den Roundtrip der invertierten Magnus-Formel. Ausführen mit:
+sowie den Roundtrip der invertierten Magnus-Formel. `app/test_main.py` deckt
+die `binary_sensor.luften_<raum>`-Attribute ab (kein `device_class`,
+identische Attribut-Keys über alle Räume hinweg). Ausführen mit:
 
 ```
 cd ha-lueftungsguete/app
-python -m unittest test_scoring.py
+pip install -r ../requirements.txt   # einmalig, für den main.py-Import (fastapi/pydantic)
+python -m unittest test_scoring.py test_main.py
 ```
 
 ## REST-Endpunkte (über Ingress erreichbar)
@@ -328,6 +331,15 @@ Eintrag explizit setzen.
 
 ## Architekturentscheidungen
 
+- **`binary_sensor.luften_<raum>` ohne `device_class`**: Eine Lüftungsempfehlung
+  ist weder ein Fensterkontakt noch ein Feuchtemelder. `device_class: "opening"`
+  (oder `"window"`/`"moisture"`) ließe HA-Zustandstexte wie "Geöffnet"/
+  "Geschlossen" oder "Trocken"/"Feucht" anzeigen statt schlicht "An"/"Aus" –
+  irreführend für eine reine Ja/Nein-Empfehlung. Die Attribute werden zentral
+  über `_luften_attributes()` in `main.py` gebaut (einheitlich für alle Räume,
+  keine raumabhängige Sonderbehandlung); `binary_sensor.schimmelrisiko_<raum>`
+  bleibt bewusst mit `device_class: "problem"`, da "Problem erkannt"/"OK"
+  für Schimmelrisiko fachlich zutreffend ist.
 - **`no_window_rooms` als eigene, generalisierte Liste** (statt `has_window: false`
   in der `rooms`-Liste): fensterlose Räume nehmen an Güte-Score, Blend-Curve
   und Lüftungsentscheidung überhaupt nicht teil, sondern laufen fachlich

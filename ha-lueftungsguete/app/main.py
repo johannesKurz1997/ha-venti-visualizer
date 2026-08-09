@@ -33,6 +33,22 @@ def _parse_float(state: dict | None) -> float | None:
         return None
 
 
+def _luften_attributes(room_name: str, delta_guete: float, stable_since: str | None) -> dict[str, Any]:
+    """Attribute für binary_sensor.luften_<raum> - bewusst OHNE device_class.
+
+    Das ist eine Lüftungsempfehlung, kein Fensterkontakt und kein Feuchtemelder;
+    jede device_class (z.B. "opening"/"window" -> "Geöffnet"/"Geschlossen",
+    "moisture" -> "Trocken"/"Feucht") würde HA zu einem irreführenden
+    Zustandstext verleiten statt schlicht "An"/"Aus" anzuzeigen. Einheitlich für
+    alle Räume - keine raumabhängige Sonderbehandlung.
+    """
+    return {
+        "friendly_name": f"Lüften {room_name}",
+        "delta_guete": round(delta_guete, 2),
+        "stable_since": stable_since,
+    }
+
+
 def _outdoor_from_weather(state: dict | None) -> tuple[float | None, float | None]:
     if state is None:
         return None, None
@@ -245,12 +261,7 @@ class Controller:
         await self.ha.set_state(
             room.binary_sensor_entity_id,
             "on" if recommend else "off",
-            {
-                "friendly_name": f"Lüften {room.name}",
-                "device_class": "opening",
-                "delta_guete": round(delta, 2),
-                "stable_since": stable_since,
-            },
+            _luften_attributes(room.name, delta, stable_since),
         )
 
         if rising_edge and self._should_notify(room.slug):
