@@ -56,6 +56,9 @@ configuration:
   poll_interval_seconds:
     name: "Poll interval (seconds)"
     description: "How often sensor states are read and the score is recalculated."
+  notify_cooldown_minutes:
+    name: "Notification cooldown (minutes)"
+    description: "Minimum time between two ventilation-recommendation push notifications for the same room, even if the recommendation flips off and on again in between (e.g. due to sensor noise around the threshold)."
   notify_targets:
     name: "Notification targets"
     description: "Pairs of notify service and person entity; a notification is only sent while the person is home."

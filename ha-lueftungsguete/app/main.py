@@ -253,7 +253,7 @@ class Controller:
             },
         )
 
-        if rising_edge:
+        if rising_edge and self._should_notify(room.slug):
             await self._notify(
                 present_persons,
                 f"Lüften empfohlen: {room.name} (ΔGüte {delta:.2f}, seit "
@@ -313,11 +313,28 @@ class Controller:
             positive_since = None
             recommend = False
 
-        self.persistence.set_room_state(
-            room_slug, {"positive_since": positive_since, "luften_on": recommend}
-        )
+        # In-place aktualisieren statt mit einem frischen Dict zu überschreiben -
+        # sonst ginge z.B. last_notified_at aus _should_notify bei jedem Poll verloren.
+        state["positive_since"] = positive_since
+        state["luften_on"] = recommend
+        self.persistence.set_room_state(room_slug, state)
         rising_edge = recommend and not was_on
         return recommend, rising_edge, positive_since
+
+    def _should_notify(self, room_slug: str) -> bool:
+        """Begrenzt Push-Notifications pro Raum auf höchstens eine pro
+        `notify_cooldown_minutes`, auch wenn die Lüftungsempfehlung (z.B. durch
+        Sensorrauschen um die Schwelle) mehrfach kurz hintereinander an-/ausgeht."""
+        state = self.persistence.get_room_state(room_slug)
+        last_notified = state.get("last_notified_at")
+        now = datetime.now(timezone.utc)
+        if last_notified is not None:
+            elapsed = (now - datetime.fromisoformat(last_notified)).total_seconds()
+            if elapsed < self.options.notify_cooldown_minutes * 60:
+                return False
+        state["last_notified_at"] = now.isoformat()
+        self.persistence.set_room_state(room_slug, state)
+        return True
 
     async def _process_no_window_room(self, room: NoWindowRoomConfig, states: dict[str, dict]) -> dict[str, Any] | None:
         temp = _parse_float(states.get(room.temp_entity))

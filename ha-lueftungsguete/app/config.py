@@ -84,6 +84,7 @@ class AddonOptions(BaseModel):
     delta_guete_threshold: float = 5.0
     stability_minutes: int = 10
     poll_interval_seconds: int = 60
+    notify_cooldown_minutes: int = 60
     notify_targets: list[NotifyTarget] = Field(default_factory=list)
 
     @field_validator("blend_steps")

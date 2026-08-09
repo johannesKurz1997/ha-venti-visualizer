@@ -145,7 +145,7 @@ Alle `poll_interval_seconds` (Default 60s):
 2. Berechnet absolute Feuchte (Magnus-Formel) für Innen- und Außenluft.
 3. Simuliert für jeden Lüftungs-Raum die Mischung Innen-/Außenluft in `blend_steps`-Schritten von 0–100 % und berechnet den Güte-Score an jedem Punkt (siehe unten).
 4. Bildet `ΔGüte = Güte(100%) - Güte(0%)`. Ist `ΔGüte` seit `stability_minutes` Minuten ununterbrochen über `delta_guete_threshold`, wird Lüften empfohlen.
-5. Setzt `binary_sensor.luften_<raum>` entsprechend und schickt beim Wechsel auf „empfohlen" eine Push-Notification an alle in `notify_targets` konfigurierten Ziele, deren zugehörige Person gerade `home` ist.
+5. Setzt `binary_sensor.luften_<raum>` entsprechend und schickt beim Wechsel auf „empfohlen" eine Push-Notification an alle in `notify_targets` konfigurierten Ziele, deren zugehörige Person gerade `home` ist – pro Raum jedoch höchstens eine Notification pro `notify_cooldown_minutes` (Default 60 Min.), auch wenn die Empfehlung in der Zwischenzeit mehrfach an-/ausgeht (z.B. durch Sensorrauschen um die Schwelle).
 6. Bewertet jeden fensterlosen Raum (z.B. Bad) separat (kein Fenster, keine Güte/Lüftungslogik) rein über absolute Feuchte mit Schwelle + Hysterese und setzt `binary_sensor.schimmelrisiko_<raum>` (für den Bereich "Bad" also exakt `binary_sensor.schimmelrisiko_bad`, kompatibel zur bisherigen Entity-ID).
 
 Stabilitäts-Zustand und eine begrenzte Score-Historie werden unter `/data`
@@ -310,6 +310,7 @@ blend_steps: 10                  # muss 100 ohne Rest teilen
 delta_guete_threshold: 5.0       # auf 0-100-Skala kalibriert (war 0.5 auf der alten, unbegrenzten Skala)
 stability_minutes: 10
 poll_interval_seconds: 60
+notify_cooldown_minutes: 60      # höchstens eine Notification pro Raum in diesem Zeitraum
 notify_targets:
   - service: "notify.mobile_app_johannes_handy"
     person_entity: "person.johannes_kurz"
@@ -404,6 +405,14 @@ Eintrag explizit setzen.
 - **Keine Falling-Edge-Notification**: Es wird nur benachrichtigt, wenn eine
   Empfehlung neu entsteht (Rising Edge), nicht wenn sie wieder endet, um
   Spam zu vermeiden.
+- **Notification-Cooldown pro Raum** (`notify_cooldown_minutes`, Default 60):
+  Zusätzlich zur Rising-Edge-Logik wird pro Raum die Zeit der letzten
+  gesendeten Notification gespeichert (`/data`, wie der Stabilitäts-Zustand)
+  und eine neue Rising-Edge-Notification innerhalb des Cooldowns unterdrückt
+  – verhindert Spam, wenn die Empfehlung z.B. durch Sensorrauschen um die
+  `delta_guete_threshold`-Schwelle mehrfach pro Stunde kurz an- und
+  ausgeht. Der `binary_sensor.luften_<raum>`-Zustand selbst wird davon nicht
+  beeinflusst, nur die Push-Notification.
 - **Base-Image-Tag** (`ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20`)
   ist zum Zeitpunkt der Erstellung ein aktueller, aber nicht auf Verfügbarkeit
   geprüfter Tag – falls der Build fehlschlägt, in `build.yaml` ggf. auf den

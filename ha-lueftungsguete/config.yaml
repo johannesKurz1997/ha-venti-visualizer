@@ -1,5 +1,5 @@
 name: "Lüftungsgüte"
-version: "0.5.0"
+version: "0.5.1"
 slug: "lueftungsguete"
 description: "Temperatur- und feuchtebasierte Lüftungsgüte-Bewertung mit Lüftungsempfehlung und Schimmelrisiko-Erkennung fürs Bad"
 url: "https://github.com/johannesKurz1997/ha-venti-visualizer/tree/main/ha-lueftungsguete"
@@ -38,6 +38,7 @@ options:
   delta_guete_threshold: 5.0
   stability_minutes: 10
   poll_interval_seconds: 60
+  notify_cooldown_minutes: 60
   notify_targets:
     - service: "notify.mobile_app_johannes_handy"
       person_entity: "person.johannes_kurz"
@@ -83,6 +84,7 @@ schema:
   delta_guete_threshold: "float"
   stability_minutes: "int(1,120)"
   poll_interval_seconds: "int(10,3600)"
+  notify_cooldown_minutes: "int(1,1440)"
   notify_targets:
     - service: "str"
       person_entity: "str"
