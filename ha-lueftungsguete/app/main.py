@@ -569,9 +569,11 @@ _INDEX_HTML = """<!doctype html>
 <html lang="de">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Lüftungsgüte</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
+  html, body { overflow-x: hidden; }
   body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #0f1115; color: #e6e6e6; }
   h1 { font-size: 1.3rem; }
   table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; }
@@ -584,20 +586,38 @@ _INDEX_HTML = """<!doctype html>
   .g-mid { background: #6b5b1f; color: #ffe9b3; }
   .g-bad { background: #6f1f1f; color: #ffd7d7; }
   .muted { color: #888; font-size: 0.85rem; }
-  .tabs { margin-bottom: 1rem; }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
   .tab-btn {
     background: #1b1e24; color: #ccc; border: 1px solid #333; padding: 0.4rem 1rem;
-    margin-right: 0.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+    border-radius: 6px; cursor: pointer; font-size: 0.9rem; min-height: 44px; flex: 1;
   }
   .tab-btn.active { background: #2b3f6b; color: #fff; border-color: #3b5aa0; }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
-  #plot3d { width: 100%; height: 620px; }
+  .hint-short { color: #888; font-size: 0.85rem; line-height: 1.35; margin: 0 0 0.4rem; }
+  .hint { font-size: 0.85rem; line-height: 1.35; color: #ccc; margin: 0 0 0.6rem; }
+  .hint summary { cursor: pointer; color: #9db4ff; min-height: 32px; display: flex; align-items: center; }
+  .hint p { margin: 0.5rem 0 0; color: #aaa; }
+  .plot-toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
+  .tool-btn {
+    background: #1b1e24; color: #ccc; border: 1px solid #333; border-radius: 6px;
+    padding: 0.5rem 0.9rem; min-height: 40px; font-size: 0.85rem; cursor: pointer;
+  }
+  .tool-btn:hover { color: #fff; }
+  .tool-btn.mobile-only { display: none; }
+  #plot3d-wrap { width: 100%; }
+  #plot3d { width: 100%; height: clamp(320px, 55vh, 520px); }
+  #plot3d.touch-guard { pointer-events: none; touch-action: pan-y; }
+  #plot3d.touch-guard.rotate-active { pointer-events: auto; touch-action: none; }
   .icon-btn {
     background: none; border: none; color: #9db4ff; cursor: pointer;
     font-size: 0.9rem; margin-left: 0.35rem; padding: 0 0.15rem;
   }
   .icon-btn:hover { color: #fff; }
+  @media (max-width: 700px) {
+    body { margin: 0.75rem; }
+    .tool-btn.mobile-only { display: inline-block; }
+  }
 </style>
 </head>
 <body>
@@ -622,11 +642,35 @@ _INDEX_HTML = """<!doctype html>
 </div>
 
 <div id="tab-plot3d" class="tab-panel">
-<p class="muted">X = Temperatur (°C), Y = relative Feuchte (%), Z = Güte (0-100) - Achsen passen sich automatisch eng an die aktuellen Werte an. Linie je Raum: aktueller Zustand (großer Punkt) &rarr; volle Außenluft-Mischung (Pfeilspitze), Farbe grün = Verbesserung ggü. jetzt, rot = Verschlechterung. Diamant = Idealpunkt des Raums. Aktuelle Außenwerte siehe Tabellen-Tab.</p>
-<div id="plot3d"></div>
+<p class="hint-short">Punkt = jetzt, Pfeil = nach voller Lüftung, Diamant = Idealpunkt.</p>
+<details class="hint" id="plot-hint">
+  <summary>Legende &amp; Erklärung</summary>
+  <p>
+    X = Temperatur, Y = relative Feuchte, Z = Güte (0-100) - Achsen passen sich
+    automatisch eng an die aktuellen Werte an. Linie je Raum: großer Punkt =
+    aktueller Zustand, Pfeilspitze = nach vollständiger Lüftung mit Außenluft;
+    Farbverlauf zeigt Verbesserung (grün) oder Verschlechterung (rot) ggü.
+    jetzt. Diamant = Idealpunkt des Raums. Die Punktfarbe in der Legende ist
+    eine feste, raumspezifische Kennfarbe - unabhängig vom Grün/Rot der Kurve.
+    Bad und die Außenreferenz erscheinen hier nicht (kein Güte-Wert für sie),
+    siehe Tabellen-Tab.
+  </p>
+</details>
+<div class="plot-toolbar">
+  <button id="plot-rotate-toggle" class="tool-btn mobile-only" type="button">Drehen aktivieren</button>
+  <button id="plot-reset-view" class="tool-btn" type="button">Ansicht zurücksetzen</button>
+</div>
+<div id="plot3d-wrap">
+  <div id="plot3d"></div>
+</div>
 </div>
 
 <script>
+const isMobile = window.matchMedia('(max-width: 700px)').matches;
+if (!isMobile) {
+  const hint = document.getElementById('plot-hint');
+  if (hint) hint.open = true;
+}
 function guteClass(v) {
   if (v > 70) return 'g-good';
   if (v >= 40) return 'g-mid';
@@ -717,6 +761,24 @@ async function resetIdealValues(slug) {
 
 // --- 3D-Ansicht (Plotly) ---
 
+// Cone-Größe = CONE_SIZE_FACTOR * größere Achsen-Spannweite (X/Y), auf Mobil
+// zusätzlich reduziert - leicht nachjustierbar, ohne die Formel suchen zu müssen.
+const CONE_SIZE_FACTOR = 0.06;
+const CONE_SIZE_FACTOR_MOBILE = CONE_SIZE_FACTOR * 0.7;
+
+const DEFAULT_CAMERA = {
+  eye: isMobile ? { x: 1.6, y: 1.6, z: 0.9 } : { x: 1.25, y: 1.25, z: 1.1 },
+};
+
+const PLOTLY_CONFIG = {
+  responsive: true,
+  displaylogo: false,
+  modeBarButtonsToRemove: isMobile
+    ? ['toImage', 'sendDataToCloud', 'hoverClosest3d', 'orbitRotation', 'resetCameraLastSave3d']
+    : ['sendDataToCloud'],
+  displayModeBar: isMobile ? 'hover' : true,
+};
+
 function lerpColor(a, b, t) {
   const ah = parseInt(a.slice(1), 16), bh = parseInt(b.slice(1), 16);
   const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
@@ -738,9 +800,13 @@ function deltaColor(delta) {
 }
 
 function baseColorForRoom(slug) {
+  // Hue-Bereich bewusst auf Cyan/Blau/Violett/Magenta beschränkt (190-330) und
+  // damit weg von Grün/Rot (0-20, 90-150, 340-360) - die Legendenfarbe ist eine
+  // feste Raum-Kennfarbe, keine Güte-Bewertung, und darf daher nicht zufällig
+  // mit der Grün=besser/Rot=schlechter-Semantik der Kurven kollidieren.
   let hash = 0;
-  for (const ch of slug) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(${hash}, 70%, 60%)`;
+  for (const ch of slug) hash = (hash * 31 + ch.charCodeAt(0)) % 140;
+  return `hsl(${190 + hash}, 70%, 60%)`;
 }
 
 let plot3dLoaded = false;
@@ -758,7 +824,8 @@ async function loadPollInterval() {
 }
 
 function pointHover(name, blend, p) {
-  return `<b>${name}</b><br>Blend ${blend}%<br>T=${p.temp_c}°C<br>F rel=${p.humidity_rel_pct}%<br>Güte=${p.guete}<extra></extra>`;
+  // Kurz und einzeilig halten - mehrzeilige Tooltips laufen auf dem Handy aus dem Bild.
+  return `${name} (${blend}%) · T=${p.temp_c}°C · rF=${p.humidity_rel_pct}% · Güte=${p.guete}<extra></extra>`;
 }
 
 // Achsenbereich eng um die tatsächlichen Werte legen (statt fester 0-100-artiger
@@ -806,6 +873,7 @@ async function refreshPlot3d() {
   const traces = [];
   const segmentSteps = [];
   const finalStepExtras = [];
+  const coneTraces = [];
   const xs = [], ys = [], zs = [];
   function trackBounds(x, y, z) {
     xs.push(x); ys.push(y); zs.push(z);
@@ -857,38 +925,55 @@ async function refreshPlot3d() {
     const prev = points[points.length - 2];
     const coneColor = deltaColor(last.guete - guete0);
     const coneIdx = traces.length;
-    traces.push({
+    const cone = {
       type: 'cone',
       x: [last.temp_c], y: [last.humidity_rel_pct], z: [last.guete],
       u: [last.temp_c - prev.temp_c], v: [last.humidity_rel_pct - prev.humidity_rel_pct], w: [last.guete - prev.guete],
-      anchor: 'tip', sizemode: 'scaled', sizeref: 2,
+      anchor: 'tip', sizemode: 'absolute', sizeref: 1, // Platzhalter, unten anhand Achsen-Spannweite gesetzt
       colorscale: [[0, coneColor], [1, coneColor]], showscale: false,
       hoverinfo: 'skip',
       visible: false,
-    });
+    };
+    traces.push(cone);
+    coneTraces.push(cone);
     finalStepExtras.push(coneIdx);
   });
 
-  const xRange = paddedRange(xs, 0.15, 6, 0, 40);
-  const yRange = paddedRange(ys, 0.15, 20, 0, 100);
-  const zRange = paddedRange(zs, 0.1, 8, 0, 100);
+  // Mindest-Ranges verhindern, dass die Kurven bei fast identischen Werten zu
+  // einer Linie kollabieren (2 °C / 10 %-Punkte / 20 Güte-Punkte).
+  const xRange = paddedRange(xs, 0.15, 2, 0, 40);
+  const yRange = paddedRange(ys, 0.15, 10, 0, 100);
+  const zRange = paddedRange(zs, 0.1, 20, 0, 100);
 
-  const axisStyle = { gridcolor: '#333', zerolinecolor: '#333', color: '#e6e6e6', backgroundcolor: 'rgba(0,0,0,0)' };
+  const coneSizeref = (isMobile ? CONE_SIZE_FACTOR_MOBILE : CONE_SIZE_FACTOR)
+    * Math.max(xRange[1] - xRange[0], yRange[1] - yRange[0]);
+  coneTraces.forEach(t => { t.sizeref = coneSizeref; });
+
+  const axisStyle = { gridcolor: '#333', zerolinecolor: '#333', color: '#e6e6e6', backgroundcolor: 'rgba(0,0,0,0)',
+    tickfont: { size: isMobile ? 9 : 11 }, nticks: isMobile ? 4 : 8, tickangle: 0 };
+  const titleFont = { size: isMobile ? 10 : 12 };
+  const legend = isMobile
+    ? { orientation: 'h', x: 0, xanchor: 'left', y: -0.02, yanchor: 'top', font: { size: 11, color: '#e6e6e6' }, itemwidth: 30 }
+    : { orientation: 'v', x: 1, xanchor: 'right', y: 1, font: { color: '#e6e6e6' } };
   const layout = {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: '#e6e6e6' },
-    margin: { l: 0, r: 0, t: 10, b: 0 },
+    margin: { l: 0, r: 0, t: 0, b: 0 },
     uirevision: 'lueftungsguete-3d',
-    legend: { font: { color: '#e6e6e6' } },
+    hovermode: 'closest',
+    hoverlabel: { font: { size: isMobile ? 11 : 13 } },
+    legend: legend,
     scene: {
-      xaxis: Object.assign({ title: 'T (°C)', range: xRange }, axisStyle),
-      yaxis: Object.assign({ title: 'F rel (%)', range: yRange }, axisStyle),
-      zaxis: Object.assign({ title: 'Güte', range: zRange }, axisStyle),
+      aspectmode: 'cube',
+      camera: DEFAULT_CAMERA,
+      xaxis: Object.assign({ title: { text: 'Temp (°C)', font: titleFont }, range: xRange }, axisStyle),
+      yaxis: Object.assign({ title: { text: 'Feuchte (%)', font: titleFont }, range: yRange }, axisStyle),
+      zaxis: Object.assign({ title: { text: 'Güte', font: titleFont }, range: zRange }, axisStyle),
     },
   };
 
-  await Plotly.react(gd, traces, layout, { responsive: true });
+  await Plotly.react(gd, traces, layout, PLOTLY_CONFIG);
 
   let step = 0;
   const totalSteps = segmentSteps.length;
@@ -908,6 +993,7 @@ async function refreshPlot3d() {
   if (plot3dFirstRender) {
     plot3dFirstRender = false;
     startAutoRotate(gd);
+    setupPlot3dInteractions(gd);
   }
 }
 
@@ -934,6 +1020,47 @@ function startAutoRotate(gd) {
   });
 }
 
+function safeResize(gd) {
+  try {
+    Plotly.Plots.resize(gd);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// Einmalig nach dem ersten erfolgreichen Render eingerichtet: Resize/Touch-
+// Verhalten, "Ansicht zurücksetzen" und (nur mobil) der Dreh-Toggle.
+function setupPlot3dInteractions(gd) {
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => safeResize(gd)).observe(document.getElementById('plot3d-wrap'));
+  }
+
+  window.addEventListener('orientationchange', () => {
+    // WebViews melden die neue Größe teils verzögert.
+    setTimeout(() => safeResize(gd), 150);
+  });
+
+  const resetBtn = document.getElementById('plot-reset-view');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      Plotly.relayout(gd, { 'scene.camera': DEFAULT_CAMERA });
+    });
+  }
+
+  // Sichtbarkeit von .mobile-only regelt die CSS-Mediaquery; hier nur das
+  // tatsächliche Touch-Verhalten - auf Desktop bleibt der Plot immer interaktiv.
+  if (isMobile) {
+    gd.classList.add('touch-guard');
+    const rotateToggle = document.getElementById('plot-rotate-toggle');
+    if (rotateToggle) {
+      rotateToggle.addEventListener('click', () => {
+        const active = gd.classList.toggle('rotate-active');
+        rotateToggle.textContent = active ? 'Drehen beenden' : 'Drehen aktivieren';
+      });
+    }
+  }
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -947,7 +1074,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         plot3dTimer = setInterval(refreshPlot3d, plot3dPollMs);
       });
     } else if (btn.dataset.tab === 'plot3d') {
-      Plotly.Plots.resize(document.getElementById('plot3d'));
+      // Ein Plot, der zuvor in einem display:none-Container gerendert wurde,
+      // behält sonst Größe 0 - beim Zurückwechseln einmal neu einpassen.
+      safeResize(document.getElementById('plot3d'));
     }
   });
 });

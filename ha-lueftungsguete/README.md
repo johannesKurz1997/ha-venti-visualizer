@@ -5,6 +5,8 @@ berechnet und daraus eine Lüftungsempfehlung ableitet. Ersetzt die alte
 `luftungsueberwachung.py` pyscript-Logik (reine Hysterese auf absoluter
 Feuchte) vollständig.
 
+Änderungshistorie: siehe [CHANGELOG.md](CHANGELOG.md).
+
 ## Installation
 
 1. In Home Assistant: **Einstellungen → Add-ons → Add-on Store → ⋮ (oben rechts) → Repositories**.
@@ -202,16 +204,16 @@ diese bleibt unverändert erreichbar) zeigt einen interaktiven 3D-Plot via
 [Plotly.js](https://plotly.com/javascript/) (per CDN eingebunden, kein
 Build-Step, keine neue Backend-Abhängigkeit):
 
-- **Achsen** (dynamisch, kein Plotly-Autoscale): X = Temperatur, Y = relative
-  Feuchte, Z = Güte 0–100. Der sichtbare Bereich wird bei jedem Redraw eng um
-  die tatsächlich geplotteten Werte gelegt (`paddedRange()`: Min/Max aller
-  aktuellen Punkte + Puffer, mit Mindestbreite gegen einen entarteten Bereich
-  bei sehr ähnlichen Werten) statt einer festen, oft halbleeren
-  10–35 °C-/0–100-Skala – Ziel ist ein fokussierter statt ausufernder Plot.
-  Die Güte-Achse (Z) ist dabei am engsten parametrisiert (10 % statt 15 %
-  Puffer, kleinere Mindestbreite), da sie am ehesten zu unnötig viel Leerraum
-  neigte. Nebeneffekt: der Ausschnitt verschiebt sich leicht zwischen Polls,
-  wenn sich die Werte ändern (kein visuell 100 % stabiler Fixpunkt mehr).
+- **Achsen** (dynamisch, kein Plotly-Autoscale, `aspectmode: 'cube'`): X =
+  Temperatur, Y = relative Feuchte, Z = Güte 0–100. Der sichtbare Bereich wird
+  bei jedem Redraw eng um die tatsächlich geplotteten Werte gelegt
+  (`paddedRange()`: Min/Max aller aktuellen Punkte + Puffer) statt einer
+  festen, oft halbleeren 10–35 °C-/0–100-Skala – Ziel ist ein fokussierter
+  statt ausufernder Plot. Eine erzwungene Mindestbreite je Achse (2 °C /
+  10 %-Punkte / 20 Güte-Punkte) verhindert, dass die Kurven bei fast
+  identischen Werten zu einer entarteten Linie kollabieren. Nebeneffekt: der
+  Ausschnitt verschiebt sich leicht zwischen Polls, wenn sich die Werte ändern
+  (kein visuell 100 % stabiler Fixpunkt mehr).
 - **Räume mit Fenster**: Linie durch alle 11 Blend-Punkte (0→100 % Außenluft),
   Farbe pro Segment interpoliert zwischen Grau (keine Änderung), Grün
   (Verbesserung ggü. dem aktuellen Zustand) und Rot (Verschlechterung) –
@@ -233,6 +235,26 @@ Build-Step, keine neue Backend-Abhängigkeit):
   nicht auf (weiterhin nur in der Tabelle sichtbar) – Schimmelrisiko-Bewertung
   und Güte-Score sind fachlich getrennte Dinge, ein gemeinsamer 3D-Plot dafür
   bringt keinen Mehrwert.
+- **Mobile Optimierung**: `const isMobile = window.matchMedia('(max-width:
+  700px)').matches` (einmal beim Laden ermittelt) steuert Startkamera,
+  Achsenschriftgrößen/-tick-Anzahl, Cone-Größe, Legenden-Ausrichtung
+  (horizontal unter dem Plot statt rechts oben, um die Modebar nicht zu
+  überlappen) und die Modebar-Buttons. Der Erklärungstext ist in ein
+  `<details>` eingeklappt (nur eine Kurzfassung bleibt permanent sichtbar);
+  der Plot-Container nutzt `clamp(320px, 55vh, 520px)` statt fester
+  Pixelhöhe, ein `ResizeObserver` plus `orientationchange`-Handler halten die
+  Größe aktuell. Auf Mobil ignoriert der Plot Touch-Gesten standardmäßig
+  (`pointer-events: none`, `touch-action: pan-y`), damit vertikales Scrollen
+  der Seite nicht von der 3D-Rotation blockiert wird; ein Toggle-Button
+  "Drehen aktivieren" schaltet die Interaktion gezielt frei
+  (`pointer-events: auto`, `touch-action: none`). Auf Desktop ist dieser
+  Toggle ausgeblendet und der Plot immer interaktiv. Ein eigener "Ansicht
+  zurücksetzen"-Button ruft `Plotly.relayout(el, {'scene.camera':
+  DEFAULT_CAMERA})` auf. Die Legenden-Kennfarbe pro Raum
+  (`baseColorForRoom()`) ist bewusst auf den Hue-Bereich 190–330 (Cyan bis
+  Magenta) beschränkt, damit sie nie zufällig mit der Grün/Rot-Semantik der
+  Kurvenfarbe (Verbesserung/Verschlechterung) kollidiert – sie ist eine feste
+  Raum-Kennfarbe, keine Güte-Bewertung.
 - **Dark Theme**: Hintergrund transparent, Achsen/Gitter/Legende in den
   Farben der bestehenden Ingress-Seite (`#e6e6e6` Text, `#333` Gitter).
 - **Auto-Rotate**: Kamera dreht sich beim allerersten Rendern automatisch
